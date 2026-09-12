@@ -26,7 +26,8 @@ function Panel() {
     <main className="max-w-4xl mx-auto p-8 space-y-6">
       <h1 className="text-2xl font-semibold">Telegram · проекты</h1>
       <p className="text-muted-foreground">
-        Темы по проектам, уведомления из Tasks. Обычные чаты не пересылаются.
+        Темы проектов, уведомления Tasks и общение с BB. Ответы приходят только
+        из явно подключённых чатов.
       </p>
       <button
         className="border rounded-md px-4 py-2"
@@ -54,6 +55,19 @@ function Panel() {
           <p>
             В очереди: {data.queue} · Задач отслеживается: {data.tasks}
           </p>
+          <p>
+            Общение с BB: {data.chatEnabled ? "включено" : "выключено"} ·
+            Подключено чатов:{" "}
+            {data.chatBindings.filter((b: any) => b.threadId).length} · Очередь
+            ответов: {data.chatQueue}
+          </p>
+          <p className="text-sm text-muted-foreground">
+            В Telegram: /project — привязать тему, /chats — выбрать чат, /new —
+            новый чат, /model — агент и модель.
+          </p>
+          {data.chatError && (
+            <p role="alert">Последняя ошибка общения: {data.chatError}</p>
+          )}
           <table className="w-full text-left">
             <thead>
               <tr>

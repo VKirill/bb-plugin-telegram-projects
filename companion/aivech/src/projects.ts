@@ -1,10 +1,94 @@
-import { readFileSync } from 'node:fs';
-const FILE='/Users/vechkasov/toolkit/service-bots/private/telegram-projects.json';
-export type Projection={updatedAt:number;error:string|null;topicsEnabled:boolean;topics:{key:string;name:string;threadId:number|null}[];tasks:{key:string;title:string;status:string;projectId:string;tracker:string}[]};
-export function projectState():Projection|null {
- try {const s=JSON.parse(readFileSync(FILE,'utf8'));if(s.botId!==8461763634||s.ownerId!==259034221||!Array.isArray(s.topics)||!Array.isArray(s.tasks))return null;return s;}catch{return null;}
+import { readFileSync } from "node:fs";
+const FILE =
+  "/Users/vechkasov/toolkit/service-bots/private/telegram-projects.json";
+export type Projection = {
+  chatBindings?: { topicId: number; projectId: string }[];
+  updatedAt: number;
+  error: string | null;
+  topicsEnabled: boolean;
+  topics: { key: string; name: string; threadId: number | null }[];
+  tasks: {
+    key: string;
+    title: string;
+    status: string;
+    projectId: string;
+    tracker: string;
+  }[];
+};
+export function projectState(): Projection | null {
+  try {
+    const s = JSON.parse(readFileSync(FILE, "utf8"));
+    if (
+      s.botId !== 8461763634 ||
+      s.ownerId !== 259034221 ||
+      !Array.isArray(s.topics) ||
+      !Array.isArray(s.tasks)
+    )
+      return null;
+    return s;
+  } catch {
+    return null;
+  }
 }
-export function smsTopic(){const s=projectState();const id=s?.topicsEnabled?s.topics.find(t=>t.key==='sms')?.threadId:null;return Number.isSafeInteger(id)&&Number(id)>0?Number(id):undefined;}
-export function projectList(){const s=projectState();if(!s)return 'Синхронизация проектов ещё не настроена.';return '📂 Проекты\n\n'+s.topics.filter(t=>t.key.startsWith('proj_')).map(t=>t.name).join('\n')+'\n\nОткрой нужную тему в списке тем бота.\n/tasks — активные задачи в текущей теме.';}
-export function taskList(threadId?:number){const s=projectState();if(!s)return 'Список задач пока недоступен.';const project=s.topics.find(t=>t.threadId===threadId&&t.key.startsWith('proj_'));const list=s.tasks.filter(t=>!project||t.projectId===project.key);const names:Record<string,string>={backlog:'в планах',todo:'к выполнению',in_progress:'в работе',in_review:'нужна проверка'};const stale=Date.now()-s.updatedAt>120_000?'\n⚠️ Данные давно не обновлялись.':'';return ('📋 '+(project?.name??'Активные задачи')+stale+'\n\n'+(list.length?list.slice(0,12).map(t=>`${t.key} · ${t.tracker}\n${t.title.slice(0,140)}\n${names[t.status]??t.status}`).join('\n\n'):'Активных задач нет.')+(list.length>12?`\n\nЕщё ${list.length-12} — в BB.`:'')).slice(0,3900);}
-export function syncStatus(){const s=projectState();return s?`\n📂 Проекты: ${s.topics.filter(t=>t.key.startsWith('proj_')).length}\nСинхронизация: ${s.error??(Date.now()-s.updatedAt>120_000?'данные устарели':'работает')}`:'\n📂 Синхронизация проектов ещё не подключена';}
+export function smsTopic() {
+  const s = projectState();
+  const id = s?.topicsEnabled
+    ? s.topics.find((t) => t.key === "sms")?.threadId
+    : null;
+  return Number.isSafeInteger(id) && Number(id) > 0 ? Number(id) : undefined;
+}
+export function projectList() {
+  const s = projectState();
+  if (!s) return "Синхронизация проектов ещё не настроена.";
+  return (
+    "📂 Проекты\n\n" +
+    s.topics
+      .filter((t) => t.key.startsWith("proj_"))
+      .map((t) => t.name)
+      .join("\n") +
+    "\n\nОткрой нужную тему в списке тем бота.\n/tasks — активные задачи в текущей теме."
+  );
+}
+export function taskList(threadId?: number) {
+  const s = projectState();
+  if (!s) return "Список задач пока недоступен.";
+  const bound = s.chatBindings?.find((b) => b.topicId === threadId);
+  const project = s.topics.find(
+    (t) =>
+      (t.threadId === threadId || t.key === bound?.projectId) &&
+      t.key.startsWith("proj_"),
+  );
+  const list = s.tasks.filter((t) => !project || t.projectId === project.key);
+  const names: Record<string, string> = {
+    backlog: "в планах",
+    todo: "к выполнению",
+    in_progress: "в работе",
+    in_review: "нужна проверка",
+  };
+  const stale =
+    Date.now() - s.updatedAt > 120_000
+      ? "\n⚠️ Данные давно не обновлялись."
+      : "";
+  return (
+    "📋 " +
+    (project?.name ?? "Активные задачи") +
+    stale +
+    "\n\n" +
+    (list.length
+      ? list
+          .slice(0, 12)
+          .map(
+            (t) =>
+              `${t.key} · ${t.tracker}\n${t.title.slice(0, 140)}\n${names[t.status] ?? t.status}`,
+          )
+          .join("\n\n")
+      : "Активных задач нет.") +
+    (list.length > 12 ? `\n\nЕщё ${list.length - 12} — в BB.` : "")
+  ).slice(0, 3900);
+}
+export function syncStatus() {
+  const s = projectState();
+  return s
+    ? `\n📂 Проекты: ${s.topics.filter((t) => t.key.startsWith("proj_")).length}\nСинхронизация: ${s.error ?? (Date.now() - s.updatedAt > 120_000 ? "данные устарели" : "работает")}`
+    : "\n📂 Синхронизация проектов ещё не подключена";
+}

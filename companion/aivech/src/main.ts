@@ -43,7 +43,7 @@ if (process.argv.includes('--demo')) {
   inbox.close();outbox.close();
 } else {
   let pollingFinished=false;
-  const polling=bot.start({allowed_updates:['message'],onStart:()=>{receipt();console.log('Service bot polling started');}})
+  const polling=bot.start({allowed_updates:['message','callback_query'],onStart:()=>{receipt();console.log('Service bot polling started');}})
     .catch(()=>{lastError='polling_failed';stopping=true;process.exitCode=1;}).finally(()=>{pollingFinished=true;});
   for (const signal of ['SIGINT','SIGTERM'] as const) process.on(signal,()=>{stopping=true;if(bot.isRunning()) bot.stop();});
   while (!stopping && !pollingFinished) {

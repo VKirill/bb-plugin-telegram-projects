@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {extractCodes,formatSms} from '../dist/sms.js';
-import {createBot,OWNER_ID,BOT_ID} from '../dist/bot.js';
+import {createBot as realCreateBot,OWNER_ID,BOT_ID} from '../dist/bot.js';
 
 test('finds ordinary service codes and preserves leading zeroes',()=>{
   assert.deepEqual(extractCodes('Ваш код подтверждения: 001234. Никому не сообщайте.'),['001234']);
@@ -47,3 +47,5 @@ test('owner command replies stay inside the requesting topic',async()=>{
  await bot.init();await bot.handleUpdate({update_id:55,message:{message_id:2,message_thread_id:888,date:1,from:{id:OWNER_ID,is_bot:false,first_name:'owner'},chat:{id:OWNER_ID,type:'private'},text:'/status',entities:[{type:'bot_command',offset:0,length:7}]}});
  assert.equal(payloads.length,1);assert.equal(payloads[0].message_thread_id,888);assert.equal(payloads[0].chat_id,OWNER_ID);
 });
+
+function createBot(token,status){return realCreateBot(token,status,{enabled:()=>false,save:()=>false});}

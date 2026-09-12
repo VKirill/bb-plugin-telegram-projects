@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-telegram-projects",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "engines": {
     "bb": ">=0.43",
@@ -8,7 +8,7 @@
   },
   "bb": {
     "name": "Telegram Projects",
-    "description": "Sync BB projects with personal Telegram topics; notify only Tasks events.",
+    "description": "Chat with BB from Telegram: project topics, session menus, voice input and Tasks notifications.",
     "branding": {
       "icon": "MessageCircle"
     },

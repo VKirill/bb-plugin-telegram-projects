@@ -1,8 +1,10 @@
+import { ChatBridge } from "./chat";
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
-import { writeFileSync, renameSync } from "node:fs";
+import { writeFileSync, renameSync, mkdirSync, existsSync } from "node:fs";
 import {
   telegram,
+  transcribeTelegramVoice,
   checkBot,
   runBb,
   trackersSchema,
@@ -24,6 +26,17 @@ import {
   type Tracker,
 } from "./model";
 const statusSchema = z.object({
+  chatEnabled: z.boolean(),
+  chatBindings: z.array(
+    z.object({
+      topicId: z.number(),
+      projectId: z.string(),
+      threadId: z.string().nullable(),
+      ready: z.boolean(),
+    }),
+  ),
+  chatQueue: z.number(),
+  chatError: z.string().nullable(),
   enabled: z.boolean(),
   bot: z.string(),
   topicsEnabled: z.boolean(),
@@ -50,6 +63,16 @@ export default async function plugin(bb: BbPluginApi) {
       type: "boolean",
       label: "Синхронизация с Telegram",
       default: false,
+    },
+    chatEnabled: {
+      type: "boolean",
+      label: "Общение с BB из Telegram",
+      default: false,
+    },
+    richReplies: {
+      type: "boolean",
+      label: "Rich Messages для ответов BB",
+      default: true,
     },
     configFile: {
       type: "string",
@@ -96,7 +119,8 @@ export default async function plugin(bb: BbPluginApi) {
   const store: Store = {
     get<T>(key: string) {
       const r = db.prepare("SELECT value FROM state WHERE key=?").get(key) as
-        { value: string } | undefined;
+        | { value: string }
+        | undefined;
       return r ? (JSON.parse(r.value) as T) : undefined;
     },
     put(key, value) {
@@ -121,6 +145,7 @@ export default async function plugin(bb: BbPluginApi) {
     },
   };
   const lifetime = new AbortController();
+  let bridge: ChatBridge | undefined;
   let flight: Promise<void> | null = null;
   let lastError: string | null = null;
   let topicsEnabled = false;
@@ -136,20 +161,22 @@ export default async function plugin(bb: BbPluginApi) {
   async function status() {
     const cfg = await settings.get();
     return {
+      chatEnabled: cfg.chatEnabled,
+      chatBindings: bridge?.status().bindings ?? [],
+      chatQueue: bridge?.status().outgoing ?? 0,
+      chatError: bridge?.status().lastError ?? null,
       enabled: cfg.enabled,
       bot: username,
       topicsEnabled,
       lastSync,
       error: lastError,
       queue: store.list("queue:").length,
-      topics: store
-        .list<Topic>("topic:")
-        .map((x) => ({
-          key: x.value.key,
-          name: x.value.name,
-          threadId: x.value.threadId,
-          creating: x.value.creating,
-        })),
+      topics: store.list<Topic>("topic:").map((x) => ({
+        key: x.value.key,
+        name: x.value.name,
+        threadId: x.value.threadId,
+        creating: x.value.creating,
+      })),
       tasks: store.list("task:").length,
     };
   }
@@ -251,10 +278,10 @@ export default async function plugin(bb: BbPluginApi) {
         topic.key === "navigation"
           ? "<b>🧭 Рабочее пространство Кирилла</b>\n\n" +
             projects.map((p) => "📂 " + escapeHtml(p.name)).join("\n") +
-            "\n\nВ темах проектов — уведомления Tasks.\n📱 SMS — коды и сообщения на телефон.\n\n/projects — проекты\n/tasks — активные задачи\n/status — состояние сервисов"
+            "\n\nВ темах проектов — чаты BB и уведомления Tasks.\n📱 SMS — коды и сообщения на телефон.\n\n/project — привязать новую тему\n/chats — чаты BB\n/model — агент и модель\n/tasks — активные задачи\n/menu — управление"
           : topic.key === "sms"
             ? "<b>📱 SMS</b>\n\nЗдесь будут новые сообщения на телефон и кнопки копирования кодов."
-            : `<b>${escapeHtml(topic.name)}</b>\n\nЗдесь появляются события задач этого проекта: создание, запуск, проверка, завершение, отмена и изменение срока.\nОбычные чаты не пересылаются.\n\n/tasks — активные задачи проекта`;
+            : `<b>${escapeHtml(topic.name)}</b>\n\nЗдесь появляются события задач этого проекта.\n\n/menu — управление чатом BB\n/new — новая сессия\n/chats — подключиться к существующему чату\n/model — агент и модель\n/tasks — задачи проекта\n\nВ Telegram приходят только ответы подключённого чата и события Tasks.`;
       if (topic.introText === text) continue;
       const payload = {
         text,
@@ -340,6 +367,10 @@ export default async function plugin(bb: BbPluginApi) {
         .list<Topic>("topic:")
         .map((x) => x.value)
         .filter((x) => !x.missingSince),
+      chatBindings:
+        bridge
+          ?.bindings()
+          .map((b) => ({ topicId: b.topicId, projectId: b.projectId })) ?? [],
       tasks: items
         .filter((x) => !["done", "canceled"].includes(x.task.status))
         .map(({ task, tracker }) => ({
@@ -377,8 +408,23 @@ export default async function plugin(bb: BbPluginApi) {
   });
   bb.cli.register({
     name: "telegram-projects",
-    summary: "Синхронизация проектов и Tasks с темами Telegram",
+    summary: "Проекты, чаты BB и уведомления Tasks в Telegram",
     commands: [
+      {
+        name: "chat-forget",
+        summary: "Удалить только привязку темы, сохранив чаты",
+        usage: "bb telegram-projects chat-forget <topic-id>",
+      },
+      {
+        name: "chat-status",
+        summary: "Состояние общения с BB",
+        usage: "bb telegram-projects chat-status --json",
+      },
+      {
+        name: "menu",
+        summary: "Показать меню чата в теме проекта",
+        usage: "bb telegram-projects menu <project-id>",
+      },
       {
         name: "test",
         summary: "Отправить явно отмеченную проверку в тему проекта",
@@ -404,6 +450,35 @@ export default async function plugin(bb: BbPluginApi) {
     ],
     async run(argv) {
       const [cmd, key, id] = argv.filter((x) => x !== "--json");
+      if (cmd === "chat-forget") {
+        const topicId = Number(key);
+        if (!bridge || !Number.isSafeInteger(topicId) || topicId < 0)
+          return { exitCode: 1, stderr: "invalid_topic" };
+        bridge.forget(topicId);
+        return {
+          exitCode: 0,
+          stdout: "Binding removed; BB and Telegram history preserved",
+        };
+      }
+      if (cmd === "chat-status")
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify(bridge?.status() ?? { started: false }),
+        };
+      if (cmd === "menu") {
+        const topic = key ? store.get<Topic>("topic:" + key) : undefined;
+        if (!bridge || !topic?.threadId)
+          return { exitCode: 1, stderr: "chat_topic_required" };
+        await bridge.handle({
+          updateId: Date.now(),
+          ownerId: OWNER_ID,
+          chatId: OWNER_ID,
+          topicId: topic.threadId,
+          messageId: 0,
+          text: "/menu",
+        });
+        return { exitCode: 0, stdout: "Menu queued" };
+      }
       if (cmd === "test") {
         if (flight) await flight;
         const cfg = await settings.get();
@@ -503,9 +578,80 @@ export default async function plugin(bb: BbPluginApi) {
       }
     },
   });
+  bb.background.service("telegram-chat", {
+    async start(signal) {
+      const spool =
+        "/Users/vechkasov/toolkit/service-bots/private/bb-chat-inbox";
+      const control =
+        "/Users/vechkasov/toolkit/service-bots/private/telegram-chat.json";
+      let rich = true;
+      let activeAbort: AbortController | undefined;
+      while (!signal.aborted) {
+        const cfg = await settings.get();
+        if (cfg.enabled && cfg.chatEnabled) {
+          rich = cfg.richReplies;
+          if (!bridge) {
+            mkdirSync(spool, { recursive: true, mode: 0o700 });
+            activeAbort = new AbortController();
+            const bridgeSignal = AbortSignal.any([
+              signal,
+              activeAbort.signal,
+              lifetime.signal,
+            ]);
+            bridge = new ChatBridge({
+              store,
+              sdk: bb.sdk,
+              tg: telegram(cfg.configFile, bridgeSignal),
+              spool,
+              baseUrl: new URL(cfg.appUrl).origin,
+              signal: bridgeSignal,
+              rich: () => rich,
+              transcribe: (v) =>
+                transcribeTelegramVoice(
+                  cfg.configFile,
+                  bb.sdk,
+                  v,
+                  bridgeSignal,
+                ),
+            });
+            bridge.recover();
+          }
+          writeFileSync(
+            control + ".tmp",
+            JSON.stringify({ enabled: true, updatedAt: Date.now() }),
+            { mode: 0o600 },
+          );
+          renameSync(control + ".tmp", control);
+          await bridge.tick();
+        } else {
+          activeAbort?.abort();
+          await bridge?.dispose();
+          bridge = undefined;
+          if (existsSync(control))
+            writeFileSync(
+              control,
+              JSON.stringify({ enabled: false, updatedAt: Date.now() }),
+              { mode: 0o600 },
+            );
+        }
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(done, 2000);
+          function done() {
+            clearTimeout(timer);
+            signal.removeEventListener("abort", done);
+            resolve();
+          }
+          signal.addEventListener("abort", done, { once: true });
+          if (signal.aborted) done();
+        });
+      }
+      await bridge?.dispose();
+    },
+  });
   bb.onDispose(async () => {
     lifetime.abort();
     wake?.();
     await flight;
+    await bridge?.dispose();
   });
 }

@@ -1,15 +1,14 @@
 ---
 name: telegram-projects
-description: Inspect or operate synchronization of BB projects and Tasks notifications with the owner's personal Telegram bot.
+description: "Operate the personal BB Telegram bridge: project topics, connected chats, voice and Tasks notifications."
 ---
+
 # Telegram Projects
 
-Use `bb telegram-projects status --json` for mappings and errors; `bb telegram-projects sync --json` to reconcile now. The plugin creates/renames topics for BB projects and deletes their complete Telegram topic history after project deletion when deleteTopics is enabled. Disabling the plugin never deletes topics.
+Use `bb telegram-projects status --json` and `chat-status --json` for diagnostics. `sync` reconciles project topics and Tasks; `menu <project-id>` sends the chat menu to that project's main topic. `test <project-id>` sends a labelled Tasks test. `bind <project-id|sms|navigation> <topic-id>` repairs a main topic after verifying its identity. `chat-forget <topic-id>` removes only its conversation binding, preserving history.
 
-Use Tasks linkedBbProjectId to route notifications. Only Tasks metadata and attached-worker status are observed; do not add ordinary chat text or general thread events to notifications.
+The owner's Telegram menu supports /project, /projects, /menu, /chats, /new, /model, /section, /history, /stop, /disconnect and /tasks. Additional Telegram topics bind through /project. A new session starts on its first text/voice message; existing sessions connect explicitly and remain visible in BB. Only bound threads and Tasks are observed. Do not attach unrelated or hidden chats automatically.
 
-`bb telegram-projects test <project-id>` sends an explicitly marked demo; use only during user-authorized bot setup/testing. `bb telegram-projects bind <project-id|sms|navigation> <topic-id>` recovers an existing topic after checking its identity; it renames that topic. A topic with creating=true has an uncertain API result: inspect Telegram before binding, never blindly repeat creation.
+Settings chatEnabled and richReplies control conversations and native Rich Messages. Incoming text/voice uses the existing owner-only companion, a durable local spool, and BB SDK. It is the only Telegram poller: never start another getUpdates/webhook receiver with the token. Voice uses BB system.transcribeVoice; do not request separate credentials. Questions depend on provider support; complex forms link to BB.
 
-Settings are in the plugin settings page. configFile/projectionFile/cliPath are server-local paths, never paths on the invoking remote client. The token is in the private configFile, not in CLI output. This integration fixes @aivech_bot and its owner; do not expand the audience without an explicit request.
-
-The existing aivech launchd service owns polling and SMS. Never start a second getUpdates process. See the plugin README for recovery and limitations.
+Personal host paths and IDs remain fixed; token stays in the private config. Keep plugin storage on updates. Unknown mutation outcomes must be checked, not automatically replayed. Read README.md and docs/usage.md in the source repository for limits and recovery. Never print token values or private message queues.
