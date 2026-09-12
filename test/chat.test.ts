@@ -57,6 +57,7 @@ function fixture() {
       }),
     },
     plugins: {
+      list: async () => ({ plugins: [] }),
       callRpc: async () => ({
         folders: [
           {
@@ -517,6 +518,65 @@ test("folder button hides host path; callback menu edits original card", async (
     await f.bridge.flush();
     assert.equal(f.sent.at(-1).method, "editMessageText");
     assert.equal(f.sent.at(-1).message_id, 12345);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("CLI profile selection follows model and travels only in initial native prompt", async () => {
+  const f = fixture();
+  try {
+    f.sdk.projects.get = async () => ({
+      id: "proj_one",
+      name: "Проект",
+      sources: [{ hostId: "host_one", path: "/work/project", isDefault: true }],
+    });
+    f.sdk.plugins.list = async () => ({
+      plugins: [{ id: "cli-agents", status: "running" }],
+    });
+    const previous = f.sdk.plugins.callRpc;
+    f.sdk.plugins.callRpc = async (a: any) => {
+      if (a.pluginId !== "cli-agents") return previous(a);
+      if (a.method === "catalog")
+        return {
+          supported: true,
+          warnings: [],
+          agents: [{ id: "reviewer", description: "Review" }],
+        };
+      assert.equal(a.input.hostId, "host_one");
+      assert.equal(a.input.projectId, "proj_one");
+      assert.equal(a.input.agentId, "reviewer");
+      return {
+        token: "11111111-1111-4111-8111-111111111111",
+        label: "Agent: reviewer",
+      };
+    };
+    await f.bridge.handle(f.input("/model"));
+    await f.press("provider");
+    await f.press("model");
+    assert.ok(
+      [...f.data.values()].some(
+        (v) => v.kind === "profile" && v.arg === "reviewer",
+      ),
+    );
+    await f.press("profile");
+    await f.bridge.flush();
+    assert.ok(f.sent.at(-1).text.includes("🎭 Профиль: reviewer"));
+    assert.ok(f.sent.at(-1).text.includes("🧠 Модель: Модель A"));
+    assert.ok(
+      !f.sent
+        .at(-1)
+        .reply_markup.inline_keyboard.flat()
+        .some((b: any) => b.text.includes("Остановить")),
+    );
+    await f.bridge.handle(f.input("Check this"));
+    assert.equal(
+      f.calls[0][1].prompt,
+      "[cli-agents-selection:11111111-1111-4111-8111-111111111111]\nCheck this",
+    );
+    assert.equal(f.calls[0][1].model, "model-a");
+    await f.bridge.handle(f.input("Next"));
+    assert.equal(f.calls[1][1].input[0].text, "Next");
   } finally {
     f.cleanup();
   }

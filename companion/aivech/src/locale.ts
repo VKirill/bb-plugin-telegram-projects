@@ -192,6 +192,18 @@ export const english: Record<string, string> = {
   "\nСрок: ": "\nDue: ",
   "\nСрок снят": "\nDue date removed",
 };
+Object.assign(english, {
+  "🎭 Выбери профиль агента для нового чата. Модель уже выбрана.":
+    "🎭 Choose an agent profile for the new chat. The model is already selected.",
+  "Не удалось загрузить профили CLI Agents для выбранного раздела. Повтори выбор или используй настройки по умолчанию.":
+    "Could not load CLI Agents profiles for this section. Retry or use defaults.",
+  Повторить: "Retry",
+  "🤖 Провайдер: ": "🤖 Provider: ",
+  "🧠 Модель: ": "🧠 Model: ",
+  "🎭 Профиль: ": "🎭 Profile: ",
+  "📁 Раздел: ": "📁 Section: ",
+  "Напиши первое сообщение, чтобы начать.": "Send your first message to start.",
+});
 export function translate(language: Language, text: string) {
   return language === "en" ? (english[text] ?? text) : text;
 }

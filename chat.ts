@@ -54,6 +54,8 @@ type Binding = {
   folderId?: string;
   providerId?: string;
   model?: string;
+  profileId?: string;
+  profileTarget?: { hostId: string; environmentId: string | null };
   activity?: string;
   status?: string;
   progressId?: number;
@@ -217,10 +219,14 @@ export class ChatBridge {
         this.button(b, "folders", this.tr("📁 Раздел")),
         this.button(b, "providers", this.tr("🤖 Агент / модель")),
       ],
-      [
-        this.button(b, "stopConfirm", this.tr("⏹ Остановить")),
-        this.button(b, "disconnect", this.tr("Отключиться")),
-      ],
+      ...(b.threadId
+        ? [
+            [
+              this.button(b, "stopConfirm", this.tr("⏹ Остановить")),
+              this.button(b, "disconnect", this.tr("Отключиться")),
+            ],
+          ]
+        : []),
       [this.button(b, "projects", this.tr("📂 Все проекты"))],
     ];
   }
@@ -454,14 +460,47 @@ export class ChatBridge {
         this.tr(
           "\n\nСообщение здесь продолжит этот чат. Другие чаты проекта не пересылаются.",
         );
-    } else
-      text += b.ready
-        ? this.tr("✚ Новый чат: напиши первое сообщение.\nНастройки: ") +
-          (b.providerId ?? this.tr("по умолчанию BB")) +
-          (b.model ? " · " + b.model : "") +
-          this.tr("\nРаздел: ") +
-          (b.folderId ? this.tr("выбран в меню") : this.tr("корень проекта"))
-        : this.tr("Чат отключён. Выбери «Новый чат» или «Чаты».");
+    } else if (b.ready) {
+      const providers = await this.d.sdk.providers.list();
+      const provider =
+        providers.find((p) => p.id === b.providerId)?.displayName ??
+        b.providerId ??
+        this.tr("По умолчанию BB");
+      let model = b.model ?? this.tr("По умолчанию BB");
+      if (b.providerId && b.model) {
+        try {
+          const c = await this.d.sdk.providers.models({
+            providerId: b.providerId!,
+          });
+          model =
+            c.models.find((m) => m.model === b.model)?.displayName ?? model;
+        } catch {}
+      }
+      let folder = this.tr("Корень проекта");
+      if (b.folderId) {
+        const f = await this.folders();
+        folder =
+          f.folders.find((f) => f.id === b.folderId)?.name ??
+          this.tr("выбран в меню");
+      }
+      text +=
+        "\n" +
+        this.tr("✚ Новый чат") +
+        "\n\n" +
+        this.tr("🤖 Провайдер: ") +
+        provider +
+        "\n" +
+        this.tr("🧠 Модель: ") +
+        model +
+        "\n" +
+        this.tr("🎭 Профиль: ") +
+        (b.profileId ?? this.tr("По умолчанию BB")) +
+        "\n" +
+        this.tr("📁 Раздел: ") +
+        folder +
+        "\n\n" +
+        this.tr("Напиши первое сообщение, чтобы начать.");
+    } else text += this.tr("Чат отключён. Выбери «Новый чат» или «Чаты».");
     const keys = this.nav(b);
     if (b.threadId) keys.unshift([this.link(b.threadId)]);
     this.enqueue(b.topicId, text, keys);
@@ -609,6 +648,101 @@ export class ChatBridge {
       [...rows, [this.button(b, "menu", this.tr("В меню"))]],
     );
   }
+  private async profileTarget(b: Binding) {
+    if (b.folderId) {
+      const folders = await this.folders();
+      const f = folders.folders.find(
+        (f) => f.id === b.folderId && f.projectId === b.projectId,
+      );
+      if (!f) throw Error("section_missing");
+      const envs = await this.d.sdk.environments.list({
+        projectId: b.projectId,
+        hostId: f.hostId,
+        path: f.path,
+      });
+      const env = envs.find(
+        (e) =>
+          e.path === f.path &&
+          e.projectId === b.projectId &&
+          e.hostId === f.hostId,
+      );
+      if (!env) throw Error("profile_environment_missing");
+      return { hostId: f.hostId, environmentId: env.id };
+    }
+    const project = await this.d.sdk.projects.get({ projectId: b.projectId });
+    const source =
+      project.sources.find((s) => s.isDefault) ?? project.sources[0];
+    if (!source) throw Error("profile_host_missing");
+    return { hostId: source.hostId, environmentId: null };
+  }
+  private async profiles(b: Binding, offset = 0) {
+    if (
+      b.threadId ||
+      !["codex", "claude-code", "acp-opencode"].includes(b.providerId ?? "")
+    )
+      return this.menu(b);
+    const installed = await this.d.sdk.plugins.list();
+    if (
+      !installed.plugins.some(
+        (p) => p.id === "cli-agents" && p.status === "running",
+      )
+    )
+      return this.menu(b);
+    try {
+      const target = await this.profileTarget(b);
+      const catalog = await this.d.sdk.plugins.callRpc({
+        pluginId: "cli-agents",
+        method: "catalog",
+        input: { ...target, projectId: b.projectId, providerId: b.providerId! },
+        outputSchema: z.object({
+          supported: z.boolean(),
+          agents: z.array(
+            z.object({ id: z.string(), description: z.string() }),
+          ),
+          warnings: z.array(z.string()),
+        }),
+      });
+      if (!catalog.supported || !catalog.agents.length) return this.menu(b);
+      const choices = [
+        this.button(b, "profile", this.tr("По умолчанию BB"), ""),
+        ...catalog.agents
+          .slice(offset, offset + 8)
+          .map((a) => this.button(b, "profile", label(a.id, 45), a.id)),
+      ];
+      const keys: Key[][] = [];
+      for (let i = 0; i < choices.length; i += 2)
+        keys.push(choices.slice(i, i + 2));
+      const pages: Key[] = [];
+      if (offset > 0)
+        pages.push(
+          this.button(b, "profiles", this.tr("← Назад"), String(offset - 8)),
+        );
+      if (catalog.agents.length > offset + 8)
+        pages.push(
+          this.button(b, "profiles", this.tr("Далее →"), String(offset + 8)),
+        );
+      if (pages.length) keys.push(pages);
+      keys.push([this.button(b, "menu", this.tr("В меню"))]);
+      this.enqueue(
+        b.topicId,
+        this.tr(
+          "🎭 Выбери профиль агента для нового чата. Модель уже выбрана.",
+        ),
+        keys,
+      );
+    } catch {
+      this.enqueue(
+        b.topicId,
+        this.tr(
+          "Не удалось загрузить профили CLI Agents для выбранного раздела. Повтори выбор или используй настройки по умолчанию.",
+        ),
+        [
+          [this.button(b, "profiles", this.tr("Повторить"))],
+          [this.button(b, "profile", this.tr("По умолчанию BB"), "")],
+        ],
+      );
+    }
+  }
   private async models(b: Binding, offset = 0) {
     const t = b.threadId ? await this.validThread(b, b.threadId) : undefined;
     const providerId = t?.providerId ?? b.providerId;
@@ -672,6 +806,8 @@ export class ChatBridge {
       "provider",
       "models",
       "model",
+      "profiles",
+      "profile",
       "stopConfirm",
     ];
     if (a && menus.includes(a.kind))
@@ -873,10 +1009,31 @@ export class ChatBridge {
         return;
       }
       const environment = await this.environment(b);
+      let prompt = text;
+      if (b.profileId) {
+        const target = await this.profileTarget(b);
+        if (JSON.stringify(target) !== JSON.stringify(b.profileTarget))
+          throw Error("profile_target_changed");
+        const selection = await this.d.sdk.plugins.callRpc({
+          pluginId: "cli-agents",
+          method: "select",
+          input: {
+            ...target,
+            projectId: b.projectId,
+            providerId: b.providerId!,
+            agentId: b.profileId,
+          },
+          outputSchema: z.object({
+            token: z.string().uuid(),
+            label: z.string(),
+          }),
+        });
+        prompt = "[cli-agents-selection:" + selection.token + "]\n" + text;
+      }
       const t = await this.d.sdk.threads.spawn({
         projectId: b.projectId,
         environment,
-        prompt: text,
+        prompt,
         title: label(text, 85),
         visibility: "visible",
         ...(b.providerId ? { providerId: b.providerId } : {}),
@@ -960,6 +1117,8 @@ export class ChatBridge {
         });
         b = {
           ...b,
+          profileId: undefined,
+          profileTarget: undefined,
           providerId: selected.providerId,
           model: defaults?.model,
           threadId: a.arg!,
@@ -998,6 +1157,8 @@ export class ChatBridge {
           )
             throw Error("section_missing");
         }
+        b.profileId = undefined;
+        b.profileTarget = undefined;
         b.folderId = a.arg || undefined;
         this.save(b);
         return this.menu(b);
@@ -1021,10 +1182,38 @@ export class ChatBridge {
           !(await this.d.sdk.providers.list()).some((p) => p.id === a.arg)
         )
           throw Error("provider_missing");
+        b.profileId = undefined;
+        b.profileTarget = undefined;
         b.providerId = a.arg || undefined;
         b.model = undefined;
         this.save(b);
         return a.arg ? this.models(b) : this.menu(b);
+      case "profiles":
+        return this.profiles(b, Number(a.arg) || 0);
+      case "profile": {
+        if (b.threadId) throw Error("new_thread_required");
+        if (a.arg) {
+          const target = await this.profileTarget(b);
+          await this.d.sdk.plugins.callRpc({
+            pluginId: "cli-agents",
+            method: "select",
+            input: {
+              ...target,
+              projectId: b.projectId,
+              providerId: b.providerId!,
+              agentId: a.arg,
+            },
+            outputSchema: z.object({ token: z.string(), label: z.string() }),
+          });
+          b.profileId = a.arg;
+          b.profileTarget = target;
+        } else {
+          b.profileId = undefined;
+          b.profileTarget = undefined;
+        }
+        this.save(b);
+        return this.menu(b);
+      }
       case "models":
         return this.models(b, Number(a.arg) || 0);
       case "model": {
@@ -1050,12 +1239,8 @@ export class ChatBridge {
         b.model = a.arg;
         b.providerId = providerId;
         this.save(b);
-        this.enqueue(
-          b.topicId,
-          this.tr("Модель выбрана: ") + a.arg,
-          this.nav(b),
-        );
-        return;
+        if (!t) return this.profiles(b);
+        return this.menu(b);
       }
       case "history":
       case "peek": {
