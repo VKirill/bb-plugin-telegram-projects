@@ -9,7 +9,13 @@ import {
 import { ChatBridge } from "./chat";
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
-import { writeFileSync, renameSync, mkdirSync, existsSync } from "node:fs";
+import {
+  watch,
+  writeFileSync,
+  renameSync,
+  mkdirSync,
+  existsSync,
+} from "node:fs";
 import {
   telegram,
   transcribeTelegramVoice,
@@ -706,79 +712,103 @@ export default async function plugin(bb: BbPluginApi) {
       let currentUrl = "";
       let language: "ru" | "en" = "ru";
       let activeAbort: AbortController | undefined;
-      while (!signal.aborted) {
-        const cfg = await settings.get();
-        if (cfg.enabled && cfg.chatEnabled) {
-          rich = cfg.richReplies;
-          currentUrl = new URL(cfg.appUrl).origin;
-          language = cfg.language as "ru" | "en";
-          if (!bridge) {
-            mkdirSync(spool, { recursive: true, mode: 0o700 });
-            activeAbort = new AbortController();
-            const bridgeSignal = AbortSignal.any([
-              signal,
-              activeAbort.signal,
-              lifetime.signal,
-            ]);
-            bridge = new ChatBridge({
-              store,
-              sdk: bb.sdk,
-              tg: telegram(cfg.configFile, bridgeSignal),
-              spool,
-              get baseUrl() {
-                return currentUrl;
-              },
-              signal: bridgeSignal,
-              rich: () => rich,
-              language: () => language,
-              transcribe: (v) =>
-                transcribeTelegramVoice(
-                  cfg.configFile,
-                  bb.sdk,
-                  v,
-                  bridgeSignal,
-                ),
-            });
-            bridge.recover();
-          }
-          writeFileSync(
-            control + ".tmp",
-            JSON.stringify({
-              enabled: true,
-              language: cfg.language,
-              updatedAt: Date.now(),
-            }),
-            { mode: 0o600 },
-          );
-          renameSync(control + ".tmp", control);
-          await bridge.tick();
-        } else {
-          activeAbort?.abort();
-          await bridge?.dispose();
-          bridge = undefined;
-          if (existsSync(control))
+      let pendingWake = false;
+      let resume: (() => void) | undefined;
+      const wakeChat = () => {
+        pendingWake = true;
+        resume?.();
+      };
+      mkdirSync(spool, { recursive: true, mode: 0o700 });
+      const watcher = watch(spool, (_event, name) => {
+        if (name?.toString().endsWith(".json")) wakeChat();
+      });
+      watcher.on("error", () => {}); // Timed polling remains as recovery if filesystem events are lost.
+      try {
+        while (!signal.aborted) {
+          const cfg = await settings.get();
+          if (cfg.enabled && cfg.chatEnabled) {
+            rich = cfg.richReplies;
+            currentUrl = new URL(cfg.appUrl).origin;
+            language = cfg.language as "ru" | "en";
+            if (!bridge) {
+              mkdirSync(spool, { recursive: true, mode: 0o700 });
+              activeAbort = new AbortController();
+              const bridgeSignal = AbortSignal.any([
+                signal,
+                activeAbort.signal,
+                lifetime.signal,
+              ]);
+              bridge = new ChatBridge({
+                store,
+                sdk: bb.sdk,
+                tg: telegram(cfg.configFile, bridgeSignal),
+                spool,
+                get baseUrl() {
+                  return currentUrl;
+                },
+                signal: bridgeSignal,
+                rich: () => rich,
+                language: () => language,
+                wake: wakeChat,
+                transcribe: (v) =>
+                  transcribeTelegramVoice(
+                    cfg.configFile,
+                    bb.sdk,
+                    v,
+                    bridgeSignal,
+                  ),
+              });
+              bridge.recover();
+            }
             writeFileSync(
-              control,
+              control + ".tmp",
               JSON.stringify({
-                enabled: false,
+                enabled: true,
                 language: cfg.language,
                 updatedAt: Date.now(),
               }),
               { mode: 0o600 },
             );
-        }
-        await new Promise<void>((resolve) => {
-          const timer = setTimeout(done, 2000);
-          function done() {
-            clearTimeout(timer);
-            signal.removeEventListener("abort", done);
-            resolve();
+            renameSync(control + ".tmp", control);
+            await bridge.tick();
+          } else {
+            activeAbort?.abort();
+            await bridge?.dispose();
+            bridge = undefined;
+            if (existsSync(control))
+              writeFileSync(
+                control,
+                JSON.stringify({
+                  enabled: false,
+                  language: cfg.language,
+                  updatedAt: Date.now(),
+                }),
+                { mode: 0o600 },
+              );
           }
-          signal.addEventListener("abort", done, { once: true });
-          if (signal.aborted) done();
-        });
+          await new Promise<void>((resolve) => {
+            if (pendingWake) {
+              pendingWake = false;
+              resolve();
+              return;
+            }
+            resume = done;
+            const timer = setTimeout(done, 2000);
+            function done() {
+              clearTimeout(timer);
+              resume = undefined;
+              pendingWake = false;
+              signal.removeEventListener("abort", done);
+              resolve();
+            }
+            signal.addEventListener("abort", done, { once: true });
+            if (signal.aborted) done();
+          });
+        }
+      } finally {
+        watcher.close();
+        await bridge?.dispose();
       }
-      await bridge?.dispose();
     },
   });
   bb.onDispose(async () => {

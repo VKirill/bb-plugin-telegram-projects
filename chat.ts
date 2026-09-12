@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { translate, type Language } from "./companion/aivech/src/locale";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
@@ -124,6 +125,11 @@ const states: Record<string, string> = {
 
 export class ChatBridge {
   private tr = (s: string) => translate(this.d.language?.() ?? "ru", s);
+  private navigation = new AsyncLocalStorage<{
+    topicId: number;
+    messageId: number;
+  }>();
+  private nextObserve = 0;
   private lanes = new Set<number>();
   private disposed = false;
   private lastError: string | null = null;
@@ -138,6 +144,7 @@ export class ChatBridge {
       spool: string;
       baseUrl: string;
       signal: AbortSignal;
+      wake?: () => void;
       language?: () => Language;
       rich: () => boolean;
       transcribe?: (v: NonNullable<ChatInput["voice"]>) => Promise<string>;
@@ -225,6 +232,14 @@ export class ChatBridge {
     rich = false,
     editId?: number,
   ) {
+    const context = this.navigation.getStore();
+    if (
+      !editId &&
+      keys &&
+      context?.topicId === topicId &&
+      !/^(event|end|question|progress):/.test(id)
+    )
+      editId = context.messageId;
     const key = "chat:out:" + id;
     if (this.s.get(key)) return;
     this.s.put(key, {
@@ -239,6 +254,7 @@ export class ChatBridge {
       retryAt: 0,
       at: Date.now(),
     } satisfies Outbox);
+    this.d.wake?.();
   }
   private link(threadId: string): Key {
     return {
@@ -336,10 +352,12 @@ export class ChatBridge {
           });
           this.lanes.delete(r.input.topicId);
           this.work.delete(p);
+          this.d.wake?.();
         });
       this.work.add(p);
     }
-    if (!this.observed) {
+    if (!this.observed && Date.now() >= this.nextObserve) {
+      this.nextObserve = Date.now() + 2000;
       this.observed = true;
       const p = this.observe()
         .catch(() => {})
@@ -354,6 +372,12 @@ export class ChatBridge {
       const p = this.flush().finally(() => {
         this.flushing = false;
         this.work.delete(p);
+        if (
+          this.s
+            .list<Outbox>("chat:out:")
+            .some(({ value: o }) => !o.sentId && o.retryAt <= Date.now())
+        )
+          this.d.wake?.();
       });
       this.work.add(p);
     }
@@ -536,9 +560,7 @@ export class ChatBridge {
         ...f.folders
           .filter((f) => f.projectId === b.projectId)
           .slice(0, 40)
-          .map((f) => [
-            this.button(b, "folder", label(f.name + " · " + f.path, 60), f.id),
-          ]),
+          .map((f) => [this.button(b, "folder", label(f.name, 60), f.id)]),
         [this.button(b, "menu", this.tr("В меню"))],
       ],
     );
@@ -623,6 +645,35 @@ export class ChatBridge {
     );
   }
   async handle(input: ChatInput) {
+    const a = input.callback?.startsWith("bb:")
+      ? this.s.get<Action>("chat:button:" + input.callback.slice(3))
+      : undefined;
+    const menus = [
+      "project",
+      "projects",
+      "menu",
+      "sessions",
+      "inspect",
+      "connect",
+      "new",
+      "disconnect",
+      "folders",
+      "folder",
+      "newAgent",
+      "providers",
+      "provider",
+      "models",
+      "model",
+      "stopConfirm",
+    ];
+    if (a && menus.includes(a.kind))
+      return this.navigation.run(
+        { topicId: input.topicId, messageId: input.messageId },
+        () => this.handleInput(input),
+      );
+    return this.handleInput(input);
+  }
+  private async handleInput(input: ChatInput) {
     let b = this.binding(input.topicId);
     if (input.callback) {
       const id = input.callback.replace(/^bb:/, "");
@@ -1361,6 +1412,7 @@ export class ChatBridge {
                 )
               : undefined);
           let result: any;
+          let edited = Boolean(editId);
           try {
             result = await this.d.tg(
               editId
@@ -1378,17 +1430,18 @@ export class ChatBridge {
             );
           } catch (e) {
             if (
-              o.rich &&
+              (o.rich || editId) &&
               e instanceof TelegramFailure &&
               e.code === "telegram_400"
-            )
+            ) {
+              edited = false;
               result = await this.d.tg("sendMessage", {
                 ...payload,
                 text: chunks[index],
               });
-            else throw e;
+            } else throw e;
           }
-          last = editId ?? result.message_id;
+          last = edited ? editId! : result.message_id;
           this.s.put(partKey, last);
         }
         this.s.put(key, { ...o, sentId: last, text: "", keys: undefined });

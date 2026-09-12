@@ -492,3 +492,32 @@ test("free text answers exact pending question; closed question never reopens", 
     f.cleanup();
   }
 });
+
+test("folder button hides host path; callback menu edits original card", async () => {
+  const f = fixture();
+  try {
+    await f.bridge.handle(f.input("/section"));
+    await f.bridge.flush();
+    const labels = f.sent
+      .at(-1)
+      .reply_markup.inline_keyboard.flat()
+      .map((b: any) => b.text);
+    assert.ok(
+      labels.every((s: string) => !s.includes("/")),
+      JSON.stringify(labels),
+    );
+    const action = [...f.data]
+      .reverse()
+      .find(([k, v]) => k.startsWith("chat:button:") && v.kind === "menu")!;
+    await f.bridge.handle({
+      ...f.input(""),
+      messageId: 12345,
+      callback: "bb:" + action[0].slice(12),
+    });
+    await f.bridge.flush();
+    assert.equal(f.sent.at(-1).method, "editMessageText");
+    assert.equal(f.sent.at(-1).message_id, 12345);
+  } finally {
+    f.cleanup();
+  }
+});

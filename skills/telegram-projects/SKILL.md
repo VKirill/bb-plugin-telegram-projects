@@ -14,3 +14,5 @@ Settings chatEnabled and richReplies control conversations and native Rich Messa
 Personal host paths and IDs remain fixed; token stays in the private config. Keep plugin storage on updates. Unknown mutation outcomes must be checked, not automatically replayed. Read README.md and docs/usage.md in the source repository for limits and recovery. Never print token values or private message queues.
 
 Version 0.3 adds settings directly in the Telegram nav panel: language ru/en, delivery/chat flags, public BB URL, read-only BotFather diagnosis and same-bot token rotation. Never return credentials. getMe exposes has_topics_enabled and allows_users_to_create_topics; Restrict bot usage needs manual inspection. Do not enable Bot Management/Bot-to-Bot for BB-internal agent communication. Language changes new service text and menus, not user content.
+
+Version 0.3.1 wakes BB on durable spool changes; timed polling is recovery only. Menu callbacks edit the clicked card; ordinary messages and answers stay separate. The receiver uses grammY long polling and silent callback acknowledgement. Rich inline button layouts remain research, not an enabled feature.

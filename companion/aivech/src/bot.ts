@@ -23,8 +23,7 @@ export function createBot(
   });
   bot.use(async (ctx, next) => {
     if (bridge.enabled() && bridge.save(ctx)) {
-      if (ctx.callbackQuery)
-        await ctx.answerCallbackQuery({ text: tr("Принято") }).catch(() => {});
+      if (ctx.callbackQuery) await ctx.answerCallbackQuery().catch(() => {});
       return;
     }
     await next();
