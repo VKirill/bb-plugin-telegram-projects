@@ -55,7 +55,7 @@ type Binding = {
   providerId?: string;
   model?: string;
   profileId?: string;
-  profileTarget?: { hostId: string; environmentId: string | null };
+  profileTarget?: { hostId: string; environmentId: string | null; cwd: string };
   activity?: string;
   status?: string;
   progressId?: number;
@@ -667,13 +667,13 @@ export class ChatBridge {
           e.hostId === f.hostId,
       );
       if (!env) throw Error("profile_environment_missing");
-      return { hostId: f.hostId, environmentId: env.id };
+      return { hostId: f.hostId, environmentId: env.id, cwd: f.path };
     }
     const project = await this.d.sdk.projects.get({ projectId: b.projectId });
     const source =
       project.sources.find((s) => s.isDefault) ?? project.sources[0];
     if (!source) throw Error("profile_host_missing");
-    return { hostId: source.hostId, environmentId: null };
+    return { hostId: source.hostId, environmentId: null, cwd: source.path };
   }
   private async profiles(b: Binding, offset = 0) {
     if (
