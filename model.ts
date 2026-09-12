@@ -1,0 +1,230 @@
+import { z } from "zod";
+export const OWNER_ID = 259034221;
+export const BOT_ID = 8461763634;
+export const taskSchema = z.object({
+  id: z.string(),
+  projectId: z.string(),
+  key: z.string(),
+  title: z.string(),
+  status: z.enum([
+    "backlog",
+    "todo",
+    "in_progress",
+    "in_review",
+    "done",
+    "canceled",
+  ]),
+  dueDate: z.string().nullable(),
+  updatedAt: z.string(),
+  createdAt: z.string().optional(),
+  agentsWorking: z.number().optional().default(0),
+});
+export type Task = z.infer<typeof taskSchema>;
+export type Project = { id: string; name: string };
+export type Tracker = {
+  id: string;
+  name: string;
+  linkedBbProjectId: string | null;
+};
+export type Topic = {
+  key: string;
+  name: string;
+  threadId: number | null;
+  creating: boolean;
+  missingSince?: number;
+  introId?: number;
+  introText?: string;
+};
+export type Event = {
+  id: string;
+  projectId: string;
+  taskId: string;
+  key: string;
+  title: string;
+  tracker: string;
+  status: string;
+  kind: string;
+  dueDate: string | null;
+  at: string;
+  urgent: boolean;
+};
+export interface Store {
+  get<T>(key: string): T | undefined;
+  put(key: string, value: unknown): void;
+  del(key: string): void;
+  list<T>(prefix: string): { key: string; value: T }[];
+  atomic(fn: () => void): void;
+}
+export const escapeHtml = (s: string) =>
+  s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+export const states: Record<string, string> = {
+  backlog: "В планах",
+  todo: "К выполнению",
+  in_progress: "В работе",
+  in_review: "Нужна проверка",
+  done: "Завершено",
+  canceled: "Отменено",
+};
+export function changes(prev: Task | undefined, next: Task): string[] {
+  if (!prev) return ["created"];
+  const out: string[] = [];
+  if (prev.status !== next.status) out.push("status");
+  else if (!prev.agentsWorking && next.agentsWorking > 0) out.push("started");
+  if (prev.dueDate !== next.dueDate) out.push("due");
+  return out;
+}
+export function formatEvent(e: Event) {
+  const heading =
+    e.kind === "test"
+      ? "🧪 Проверка уведомлений"
+      : e.kind === "worker_error"
+        ? "🔴 Ошибка исполнителя"
+        : e.kind === "created"
+          ? "🆕 Новая задача"
+          : e.kind === "started"
+            ? "▶️ Исполнитель начал работу"
+            : e.kind === "due"
+              ? "📅 Изменён срок"
+              : e.status === "in_review"
+                ? "👀 Нужна проверка"
+                : e.status === "done"
+                  ? "✅ Задача завершена"
+                  : e.status === "canceled"
+                    ? "⏹ Задача отменена"
+                    : "🔄 Статус задачи";
+  return `<b>${heading}</b>\n${escapeHtml(e.tracker.slice(0, 150))} · <code>${escapeHtml(e.key)}</code>\n\n<b>${escapeHtml(e.title.slice(0, 500))}</b>\nСтатус: ${escapeHtml(states[e.status] ?? e.status)}${e.dueDate ? "\nСрок: " + escapeHtml(e.dueDate) : e.kind === "due" ? "\nСрок снят" : ""}\n\n<i>${escapeHtml(new Date(e.at).toLocaleString("ru-RU", { timeZone: "Europe/Madrid" }))} · Мадрид</i>`;
+}
+export function ingest(
+  store: Store,
+  tracker: Tracker,
+  tasks: Task[],
+  now = Date.now(),
+) {
+  if (!tracker.linkedBbProjectId) return;
+  const baseline = store.get<boolean>("baseline:" + tracker.id);
+  store.atomic(() => {
+    for (const task of tasks) {
+      const old = store.get<Task>("task:" + task.id);
+      if (
+        baseline ||
+        (task.createdAt &&
+          Date.parse(task.createdAt) >=
+            (store.get<number>("trackingSince") ?? Infinity))
+      )
+        for (const kind of changes(old, task)) {
+          const e: Event = {
+            id: `${task.id}:${task.updatedAt}:${kind}:${task.agentsWorking}`,
+            projectId: tracker.linkedBbProjectId!,
+            taskId: task.id,
+            key: task.key,
+            title: task.title,
+            tracker: tracker.name,
+            status: task.status,
+            kind,
+            dueDate: task.dueDate,
+            at: new Date(now).toISOString(),
+            urgent: task.status === "in_review",
+          };
+          if (!store.get("sent:" + e.id)) store.put("queue:" + e.id, e);
+        }
+      store.put("task:" + task.id, task);
+    }
+    store.put("visible:" + tracker.id, tasks);
+    store.put("tracker:" + tracker.id, tracker);
+    store.put("baseline:" + tracker.id, true);
+  });
+}
+export function topicName(p: Project) {
+  return `📂 ${p.name}`.slice(0, 128);
+}
+export class TelegramFailure extends Error {
+  constructor(
+    public code: string,
+    public retryAfter = 30,
+    public ambiguous = false,
+  ) {
+    super(code);
+  }
+}
+export type Telegram = <T = any>(
+  method: string,
+  body: Record<string, unknown>,
+) => Promise<T>;
+export async function ensureTopic(
+  store: Store,
+  tg: Telegram,
+  key: string,
+  name: string,
+): Promise<Topic> {
+  let topic = store.get<Topic>("topic:" + key);
+  if (topic?.creating) throw new Error("topic_creation_uncertain:" + key);
+  if (!topic?.threadId) {
+    topic = { key, name, threadId: null, creating: true };
+    store.put("topic:" + key, topic);
+    try {
+      const r = await tg<{ message_thread_id: number }>("createForumTopic", {
+        name,
+        icon_color: 7322096,
+      });
+      if (
+        !Number.isSafeInteger(r.message_thread_id) ||
+        r.message_thread_id <= 0
+      )
+        throw new TelegramFailure("invalid_topic_response", 30, true);
+      topic.threadId = r.message_thread_id;
+      topic.creating = false;
+      store.put("topic:" + key, topic);
+    } catch (e) {
+      if (e instanceof TelegramFailure && !e.ambiguous) {
+        topic.creating = false;
+        store.put("topic:" + key, topic);
+      }
+      throw e;
+    }
+  }
+  if (topic.name !== name) {
+    await tg("editForumTopic", { message_thread_id: topic.threadId, name });
+    topic.name = name;
+    store.put("topic:" + key, topic);
+  }
+  if (topic.missingSince) {
+    delete topic.missingSince;
+    store.put("topic:" + key, topic);
+  }
+  return topic;
+}
+export async function reconcileProjects(
+  store: Store,
+  tg: Telegram,
+  projects: Project[],
+  deleteRemoved: boolean,
+  now = Date.now(),
+) {
+  for (const p of projects) await ensureTopic(store, tg, p.id, topicName(p));
+  const live = new Set(projects.map((p) => p.id));
+  for (const { value: topic } of store.list<Topic>("topic:proj_")) {
+    if (live.has(topic.key)) continue;
+    if (!topic.missingSince) {
+      topic.missingSince = now;
+      store.put("topic:" + topic.key, topic);
+      continue;
+    }
+    if (!deleteRemoved || now - topic.missingSince < 30_000 || !topic.threadId)
+      continue;
+    try {
+      await tg("deleteForumTopic", { message_thread_id: topic.threadId });
+    } catch (e) {
+      if (!(e instanceof TelegramFailure && e.code === "topic_missing"))
+        throw e;
+    }
+    store.atomic(() => {
+      store.del("topic:" + topic.key);
+      for (const { key, value: e } of store.list<Event>("queue:"))
+        if (e.projectId === topic.key) store.del(key);
+    });
+  }
+}
