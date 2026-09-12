@@ -594,16 +594,19 @@ export class ChatBridge {
       return;
     }
     const providers = await this.d.sdk.providers.list();
+    const choices = [
+      this.button(b, "provider", this.tr("По умолчанию BB"), ""),
+      ...providers
+        .filter((p) => p.available)
+        .map((p) => this.button(b, "provider", label(p.displayName), p.id)),
+    ];
+    const rows: Key[][] = [];
+    for (let i = 0; i < choices.length; i += 2)
+      rows.push(choices.slice(i, i + 2));
     this.enqueue(
       b.topicId,
       this.tr("🤖 Агент для нового чата. Его модели берутся из настроек BB."),
-      [
-        [this.button(b, "provider", this.tr("По умолчанию BB"), "")],
-        ...providers
-          .filter((p) => p.available)
-          .map((p) => [this.button(b, "provider", label(p.displayName), p.id)]),
-        [this.button(b, "menu", this.tr("В меню"))],
-      ],
+      [...rows, [this.button(b, "menu", this.tr("В меню"))]],
     );
   }
   private async models(b: Binding, offset = 0) {
