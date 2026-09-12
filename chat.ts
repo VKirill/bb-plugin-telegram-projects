@@ -622,19 +622,24 @@ export class ChatBridge {
         : { providerId },
     );
     if (catalog.modelLoadError) throw Error("models_unavailable");
-    const keys = catalog.models
+    const choices = catalog.models
       .slice(offset, offset + 8)
-      .map((m) => [
+      .map((m) =>
         this.button(b, "model", label(m.displayName), m.model, providerId),
-      ]);
+      );
+    const keys: Key[][] = [];
+    for (let i = 0; i < choices.length; i += 2)
+      keys.push(choices.slice(i, i + 2));
+    const pages: Key[] = [];
     if (offset > 0)
-      keys.push([
+      pages.push(
         this.button(b, "models", this.tr("← Назад"), String(offset - 8)),
-      ]);
+      );
     if (catalog.models.length > offset + 8)
-      keys.push([
+      pages.push(
         this.button(b, "models", this.tr("Далее →"), String(offset + 8)),
-      ]);
+      );
+    if (pages.length) keys.push(pages);
     keys.push([this.button(b, "menu", this.tr("В меню"))]);
     this.enqueue(
       b.topicId,
