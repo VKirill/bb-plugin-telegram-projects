@@ -193,6 +193,7 @@ export const english: Record<string, string> = {
   "\nСрок снят": "\nDue date removed",
 };
 Object.assign(english, {
+  "Страница ": "Page ",
   "🎭 Выбери профиль агента для нового чата. Модель уже выбрана.":
     "🎭 Choose an agent profile for the new chat. The model is already selected.",
   "Не удалось загрузить профили CLI Agents для выбранного раздела. Повтори выбор или используй настройки по умолчанию.":

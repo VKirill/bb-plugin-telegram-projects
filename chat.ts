@@ -686,8 +686,12 @@ export class ChatBridge {
       !installed.plugins.some(
         (p) => p.id === "cli-agents" && p.status === "running",
       )
-    )
+    ) {
+      b.profileId = undefined;
+      b.profileTarget = undefined;
+      this.save(b);
       return this.menu(b);
+    }
     try {
       const target = await this.profileTarget(b);
       const catalog = await this.d.sdk.plugins.callRpc({
@@ -703,15 +707,23 @@ export class ChatBridge {
         }),
       });
       if (!catalog.supported || !catalog.agents.length) return this.menu(b);
-      const choices = [
-        this.button(b, "profile", this.tr("По умолчанию BB"), ""),
-        ...catalog.agents
-          .slice(offset, offset + 8)
-          .map((a) => this.button(b, "profile", label(a.id, 45), a.id)),
-      ];
+      const pageSize = 8;
+      const totalPages = Math.ceil(catalog.agents.length / pageSize);
+      offset =
+        Math.max(
+          0,
+          Math.min(
+            totalPages - 1,
+            Math.floor((Number.isFinite(offset) ? offset : 0) / pageSize),
+          ),
+        ) * pageSize;
+      const choices = catalog.agents
+        .slice(offset, offset + pageSize)
+        .map((a) => this.button(b, "profile", label(a.id, 45), a.id));
       const keys: Key[][] = [];
       for (let i = 0; i < choices.length; i += 2)
         keys.push(choices.slice(i, i + 2));
+      keys.push([this.button(b, "profile", this.tr("По умолчанию BB"), "")]);
       const pages: Key[] = [];
       if (offset > 0)
         pages.push(
@@ -727,7 +739,12 @@ export class ChatBridge {
         b.topicId,
         this.tr(
           "🎭 Выбери профиль агента для нового чата. Модель уже выбрана.",
-        ),
+        ) +
+          "\n\n" +
+          this.tr("Страница ") +
+          (offset / pageSize + 1) +
+          " / " +
+          totalPages,
         keys,
       );
     } catch {

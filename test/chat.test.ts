@@ -559,7 +559,16 @@ test("CLI profile selection follows model and travels only in initial native pro
         (v) => v.kind === "profile" && v.arg === "reviewer",
       ),
     );
-    await f.press("profile");
+    const reviewer = [...f.data].find(
+      ([k, v]) =>
+        k.startsWith("chat:button:") &&
+        v.kind === "profile" &&
+        v.arg === "reviewer",
+    )!;
+    await f.bridge.handle({
+      ...f.input(""),
+      callback: "bb:" + reviewer[0].slice(12),
+    });
     await f.bridge.flush();
     assert.ok(f.sent.at(-1).text.includes("🎭 Профиль: reviewer"));
     assert.ok(f.sent.at(-1).text.includes("🧠 Модель: Модель A"));
@@ -577,6 +586,138 @@ test("CLI profile selection follows model and travels only in initial native pro
     assert.equal(f.calls[0][1].model, "model-a");
     await f.bridge.handle(f.input("Next"));
     assert.equal(f.calls[1][1].input[0].text, "Next");
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("profile pages show eight agents, paired buttons, bounded navigation and default", async () => {
+  const f = fixture();
+  try {
+    f.sdk.projects.get = async () => ({
+      id: "proj_one",
+      name: "Project",
+      sources: [{ hostId: "host_one", path: "/work", isDefault: true }],
+    });
+    f.sdk.plugins.list = async () => ({
+      plugins: [{ id: "cli-agents", status: "running" }],
+    });
+    f.sdk.plugins.callRpc = async () => ({
+      supported: true,
+      warnings: [],
+      agents: Array.from({ length: 19 }, (_, i) => ({
+        id: "role-" + i,
+        description: "",
+      })),
+    });
+    await f.bridge.handle(f.input("/model"));
+    await f.press("provider");
+    await f.press("model");
+    await f.bridge.flush();
+    const buttons = () => f.sent.at(-1).reply_markup.inline_keyboard;
+    assert.deepEqual(
+      buttons()
+        .slice(0, 4)
+        .map((r: any) => r.length),
+      [2, 2, 2, 2],
+    );
+    assert.ok(f.sent.at(-1).text.includes("1 / 3"));
+    assert.ok(!JSON.stringify(buttons()).includes("role-8"));
+    const clickNext = async () => {
+      const next = [...f.data]
+        .reverse()
+        .find(
+          ([k, v]) =>
+            k.startsWith("chat:button:") &&
+            v.kind === "profiles" &&
+            v.arg === String(f.sent.at(-1).text.includes("1 / 3") ? 8 : 16),
+        );
+      assert.ok(next);
+      await f.bridge.handle({
+        ...f.input(""),
+        callback: "bb:" + next[0].slice(12),
+      });
+      await f.bridge.flush();
+    };
+    await clickNext();
+    assert.ok(f.sent.at(-1).text.includes("2 / 3"));
+    assert.equal(buttons()[0][0].text, "role-8");
+    await clickNext();
+    assert.ok(f.sent.at(-1).text.includes("3 / 3"));
+    assert.equal(buttons()[0][0].text, "role-16");
+    assert.ok(
+      !buttons()
+        .flat()
+        .some((b: any) => b.text.includes("Далее")),
+    );
+    assert.ok(
+      buttons()
+        .flat()
+        .some((b: any) => b.text === "По умолчанию BB"),
+    );
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("Projects & Sections target is passed to CLI Agents; absent CLI Agents skips picker", async () => {
+  const f = fixture();
+  try {
+    f.sdk.plugins.list = async () => ({
+      plugins: [
+        { id: "project-folders", status: "running" },
+        { id: "cli-agents", status: "running" },
+      ],
+    });
+    f.sdk.environments.list = async () => [
+      {
+        id: "env_section",
+        hostId: "mini",
+        projectId: "proj_one",
+        path: "/work/project/section",
+      },
+    ];
+    const original = f.sdk.plugins.callRpc;
+    let seen: any;
+    f.sdk.plugins.callRpc = async (a: any) => {
+      if (a.pluginId === "project-folders") return original(a);
+      seen = a.input;
+      return {
+        supported: true,
+        warnings: [],
+        agents: [{ id: "section-role", description: "" }],
+      };
+    };
+    await f.bridge.handle(f.input("/section"));
+    const section = [...f.data].find(
+      ([k, v]) =>
+        k.startsWith("chat:button:") &&
+        v.kind === "folder" &&
+        v.arg === "folder",
+    )!;
+    await f.bridge.handle({
+      ...f.input(""),
+      callback: "bb:" + section[0].slice(12),
+    });
+    await f.bridge.handle(f.input("/model"));
+    await f.press("provider");
+    await f.press("model");
+    await f.bridge.flush();
+    assert.equal(seen.hostId, "mini");
+    assert.equal(seen.environmentId, "env_section");
+    assert.equal(seen.cwd, "/work/project/section");
+    assert.ok(f.sent.at(-1).text.includes("Выбери профиль"));
+    f.sdk.plugins.list = async () => ({
+      plugins: [{ id: "project-folders", status: "running" }],
+    });
+    seen = null;
+    await f.bridge.handle(f.input("/model"));
+    await f.press("provider");
+    await f.press("model");
+    await f.bridge.flush();
+    assert.equal(seen, null);
+    assert.ok(f.sent.at(-1).text.includes("Напиши первое сообщение"));
+    assert.ok(!f.sent.at(-1).text.includes("Выбери профиль"));
   } finally {
     f.cleanup();
   }
