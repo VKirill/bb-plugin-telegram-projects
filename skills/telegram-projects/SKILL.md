@@ -18,3 +18,5 @@ Version 0.3 adds settings directly in the Telegram nav panel: language ru/en, de
 Version 0.3.1 wakes BB on durable spool changes; timed polling is recovery only. Menu callbacks edit the clicked card; ordinary messages and answers stay separate. The receiver uses grammY long polling and silent callback acknowledgement. Rich inline button layouts remain research, not an enabled feature.
 
 Version 0.4 adds optional CLI Agents catalog/select RPC after model selection for new sessions. Selection is target-scoped and revalidated at spawn; marker appears only in the initial prompt. No global CLI config changes. Provider/section changes clear the profile. Existing sessions keep their native role. Section profiles require an already registered matching environment.
+
+Use `/server` before choosing a model to select the new chat host. The project needs a source on that host. `/profile` opens native profiles; empty catalogs show a default-agent explanation. Existing chats keep their host.

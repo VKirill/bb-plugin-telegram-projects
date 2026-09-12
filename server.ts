@@ -152,8 +152,7 @@ export default async function plugin(bb: BbPluginApi) {
   const store: Store = {
     get<T>(key: string) {
       const r = db.prepare("SELECT value FROM state WHERE key=?").get(key) as
-        | { value: string }
-        | undefined;
+        { value: string } | undefined;
       return r ? (JSON.parse(r.value) as T) : undefined;
     },
     put(key, value) {
@@ -221,7 +220,7 @@ export default async function plugin(bb: BbPluginApi) {
     if (!store.get("trackingSince")) store.put("trackingSince", Date.now());
     const tg = telegram(cfg.configFile, lifetime.signal);
     const me = await checkBot(tg);
-    if (store.get("commandsLanguage") !== cfg.language) {
+    if (store.get("commandsLanguage") !== cfg.language + ":v2") {
       const labels =
         cfg.language === "en"
           ? [
@@ -237,6 +236,8 @@ export default async function plugin(bb: BbPluginApi) {
               "Active tasks",
               "Service status",
               "Help",
+              "Choose a server",
+              "Choose an agent profile",
             ]
           : [
               "Привязать тему к проекту",
@@ -251,6 +252,8 @@ export default async function plugin(bb: BbPluginApi) {
               "Активные задачи",
               "Состояние сервисов",
               "Помощь",
+              "Выбрать сервер",
+              "Выбрать профиль агента",
             ];
       const commands = [
         "project",
@@ -265,6 +268,8 @@ export default async function plugin(bb: BbPluginApi) {
         "tasks",
         "status",
         "help",
+        "server",
+        "profile",
       ].map((command, i) => ({ command, description: labels[i] }));
       for (const language_code of ["", "ru", "en"])
         await tg("setMyCommands", {
@@ -272,7 +277,7 @@ export default async function plugin(bb: BbPluginApi) {
           scope: { type: "chat", chat_id: OWNER_ID },
           language_code,
         });
-      store.put("commandsLanguage", cfg.language);
+      store.put("commandsLanguage", cfg.language + ":v2");
     }
     username = me.username;
     topicsEnabled = me.topics;

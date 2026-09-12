@@ -722,3 +722,61 @@ test("Projects & Sections target is passed to CLI Agents; absent CLI Agents skip
     f.cleanup();
   }
 });
+
+test("server selection routes catalogs and new chat to that project's remote source", async () => {
+  const f = fixture();
+  try {
+    f.sdk.hosts = {
+      list: async () => [{ id: "ovh", name: "OVH", status: "connected" }],
+      get: async () => ({ id: "ovh", name: "OVH", status: "connected" }),
+    };
+    f.sdk.projects.get = async () => ({
+      id: "proj_one",
+      sources: [{ hostId: "ovh", path: "/srv/project", isDefault: false }],
+    });
+    const routes: any[] = [];
+    f.sdk.providers.list = async (a: any) => {
+      routes.push(a);
+      return [{ id: "codex", displayName: "Codex", available: true }];
+    };
+    await f.bridge.handle(f.input("/server"));
+    await f.press("host");
+    await f.press("provider");
+    await f.press("model");
+    await f.bridge.handle(f.input("Hello remote"));
+    const spawn = f.calls.find((c) => c[0] === "spawn")[1];
+    assert.deepEqual(spawn.environment, {
+      type: "host",
+      hostId: "ovh",
+      workspace: { type: "unmanaged", path: "/srv/project" },
+    });
+    assert.ok(routes.some((r) => r.hostId === "ovh"));
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("empty native profile catalog explains fallback after model selection", async () => {
+  const f = fixture();
+  try {
+    f.sdk.projects.get = async () => ({
+      id: "proj_one",
+      sources: [{ hostId: "mini", path: "/work/project", isDefault: true }],
+    });
+    f.sdk.plugins.list = async () => ({
+      plugins: [{ id: "cli-agents", status: "running" }],
+    });
+    f.sdk.plugins.callRpc = async () => ({
+      supported: true,
+      agents: [],
+      warnings: [],
+    });
+    await f.bridge.handle(f.input("/model"));
+    await f.press("provider");
+    await f.press("model");
+    await f.bridge.flush();
+    assert.ok(f.sent.at(-1).text.includes("профили не найдены"));
+  } finally {
+    f.cleanup();
+  }
+});

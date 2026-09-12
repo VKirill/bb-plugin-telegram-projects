@@ -52,6 +52,7 @@ type Binding = {
   ready: boolean;
   cursor: number;
   folderId?: string;
+  hostId?: string;
   providerId?: string;
   model?: string;
   profileId?: string;
@@ -227,6 +228,14 @@ export class ChatBridge {
             ],
           ]
         : []),
+      ...(b.threadId
+        ? []
+        : [
+            [
+              this.button(b, "hosts", this.tr("🖥 Сервер")),
+              this.button(b, "profiles", this.tr("🎭 Профиль")),
+            ],
+          ]),
       [this.button(b, "projects", this.tr("📂 Все проекты"))],
     ];
   }
@@ -461,16 +470,24 @@ export class ChatBridge {
           "\n\nСообщение здесь продолжит этот чат. Другие чаты проекта не пересылаются.",
         );
     } else if (b.ready) {
-      const providers = await this.d.sdk.providers.list();
+      const providers = await this.d.sdk.providers.list(await this.routing(b));
       const provider =
         providers.find((p) => p.id === b.providerId)?.displayName ??
         b.providerId ??
         this.tr("По умолчанию BB");
+      const hostId = await this.selectedHost(b);
+      let hostName = hostId ?? this.tr("По умолчанию BB");
+      if (hostId) {
+        try {
+          hostName = (await this.d.sdk.hosts.get({ hostId })).name;
+        } catch {}
+      }
       let model = b.model ?? this.tr("По умолчанию BB");
       if (b.providerId && b.model) {
         try {
           const c = await this.d.sdk.providers.models({
             providerId: b.providerId!,
+            ...(await this.routing(b)),
           });
           model =
             c.models.find((m) => m.model === b.model)?.displayName ?? model;
@@ -487,6 +504,9 @@ export class ChatBridge {
         "\n" +
         this.tr("✚ Новый чат") +
         "\n\n" +
+        this.tr("🖥 Сервер: ") +
+        hostName +
+        "\n" +
         this.tr("🤖 Провайдер: ") +
         provider +
         "\n" +
@@ -597,20 +617,95 @@ export class ChatBridge {
       [
         [this.button(b, "folder", this.tr("Корень проекта"), "")],
         ...f.folders
-          .filter((f) => f.projectId === b.projectId)
+          .filter(
+            (f) =>
+              f.projectId === b.projectId &&
+              (!b.hostId || f.hostId === b.hostId),
+          )
           .slice(0, 40)
           .map((f) => [this.button(b, "folder", label(f.name, 60), f.id)]),
         [this.button(b, "menu", this.tr("В меню"))],
       ],
     );
   }
+  private async selectedHost(b: Binding): Promise<string | undefined> {
+    if (b.hostId) return b.hostId;
+    if (b.folderId) {
+      const f = (await this.folders()).folders.find(
+        (f) => f.id === b.folderId && f.projectId === b.projectId,
+      );
+      if (f) return f.hostId;
+    }
+    const p = await this.d.sdk.projects.get({ projectId: b.projectId });
+    return (p.sources?.find((s) => s.isDefault) ?? p.sources?.[0])?.hostId;
+  }
+  private async routing(
+    b: Binding,
+  ): Promise<{ hostId: string } | { hostId?: never }> {
+    const hostId = await this.selectedHost(b);
+    return hostId ? { hostId } : {};
+  }
+  private async chooseHost(b: Binding) {
+    if (b.threadId) {
+      this.enqueue(
+        b.topicId,
+        this.tr(
+          "Сервер существующего чата сохраняется. Для другой машины создай новый чат.",
+        ),
+        this.nav(b),
+      );
+      return;
+    }
+    const hosts = await this.d.sdk.hosts.list();
+    const project = await this.d.sdk.projects.get({ projectId: b.projectId });
+    const choices = hosts
+      .filter((h) => h.status === "connected")
+      .map((h) =>
+        this.button(
+          b,
+          "host",
+          label(
+            h.name +
+              (project.sources.some((s) => s.hostId === h.id)
+                ? ""
+                : " · " + this.tr("нет папки проекта")),
+            50,
+          ),
+          h.id,
+        ),
+      );
+    const rows: Key[][] = [];
+    for (let i = 0; i < choices.length; i += 2)
+      rows.push(choices.slice(i, i + 2));
+    rows.push([this.button(b, "menu", this.tr("В меню"))]);
+    this.enqueue(
+      b.topicId,
+      this.tr(
+        "🖥 Где запустить новый чат? Модели и профили будут взяты с выбранной машины.",
+      ),
+      rows,
+    );
+  }
   private async environment(b: Binding): Promise<CreateThreadEnvironmentArgs> {
-    if (!b.folderId) return { type: "project-default" };
+    if (!b.folderId) {
+      if (!b.hostId) return { type: "project-default" };
+      const host = await this.d.sdk.hosts.get({ hostId: b.hostId });
+      if (host.status !== "connected") throw Error("host_offline");
+      const p = await this.d.sdk.projects.get({ projectId: b.projectId });
+      const source = p.sources.find((s) => s.hostId === b.hostId);
+      if (!source) throw Error("project_source_missing");
+      return {
+        type: "host",
+        hostId: b.hostId,
+        workspace: { type: "unmanaged", path: source.path },
+      };
+    }
     const fs = await this.folders();
     const f = fs.folders.find(
       (x) => x.id === b.folderId && x.projectId === b.projectId,
     );
-    if (!f) throw Error("section_missing");
+    if (!f || (b.hostId && b.hostId !== f.hostId))
+      throw Error("section_missing");
     return {
       type: "host",
       hostId: f.hostId,
@@ -632,7 +727,7 @@ export class ChatBridge {
       );
       return;
     }
-    const providers = await this.d.sdk.providers.list();
+    const providers = await this.d.sdk.providers.list(await this.routing(b));
     const choices = [
       this.button(b, "provider", this.tr("По умолчанию BB"), ""),
       ...providers
@@ -670,8 +765,9 @@ export class ChatBridge {
       return { hostId: f.hostId, environmentId: env.id, cwd: f.path };
     }
     const project = await this.d.sdk.projects.get({ projectId: b.projectId });
-    const source =
-      project.sources.find((s) => s.isDefault) ?? project.sources[0];
+    const source = b.hostId
+      ? project.sources.find((s) => s.hostId === b.hostId)
+      : (project.sources.find((s) => s.isDefault) ?? project.sources[0]);
     if (!source) throw Error("profile_host_missing");
     return { hostId: source.hostId, environmentId: null, cwd: source.path };
   }
@@ -706,7 +802,24 @@ export class ChatBridge {
           warnings: z.array(z.string()),
         }),
       });
-      if (!catalog.supported || !catalog.agents.length) return this.menu(b);
+      if (!catalog.supported || !catalog.agents.length) {
+        b.profileId = undefined;
+        b.profileTarget = undefined;
+        this.save(b);
+        this.enqueue(
+          b.topicId,
+          this.tr(
+            "На выбранном сервере для этого провайдера профили не найдены. Будет использован агент по умолчанию.",
+          ),
+          [
+            [
+              this.button(b, "hosts", this.tr("🖥 Сервер")),
+              this.button(b, "menu", this.tr("В меню")),
+            ],
+          ],
+        );
+        return;
+      }
       const pageSize = 8;
       const totalPages = Math.ceil(catalog.agents.length / pageSize);
       offset =
@@ -770,7 +883,7 @@ export class ChatBridge {
     const catalog = await this.d.sdk.providers.models(
       t?.environmentId
         ? { providerId, environmentId: t.environmentId }
-        : { providerId },
+        : { providerId, ...(await this.routing(b)) },
     );
     if (catalog.modelLoadError) throw Error("models_unavailable");
     const choices = catalog.models
@@ -823,6 +936,8 @@ export class ChatBridge {
       "provider",
       "models",
       "model",
+      "hosts",
+      "host",
       "profiles",
       "profile",
       "stopConfirm",
@@ -925,6 +1040,9 @@ export class ChatBridge {
       "/section": "folders",
       "/agent": "providers",
       "/model": "providers",
+      "/server": "hosts",
+      "/servers": "hosts",
+      "/profile": "profiles",
     };
     if (commands[cmd]) {
       await this.action(b, {
@@ -1070,6 +1188,38 @@ export class ChatBridge {
   }
   private async action(b: Binding, a: Action) {
     switch (a.kind) {
+      case "hosts":
+        return this.chooseHost(b);
+      case "host": {
+        if (b.threadId) throw Error("new_thread_required");
+        const host = await this.d.sdk.hosts.get({ hostId: a.arg! });
+        if (host.status !== "connected") throw Error("host_offline");
+        const project = await this.d.sdk.projects.get({
+          projectId: b.projectId,
+        });
+        if (!project.sources.some((s) => s.hostId === a.arg)) {
+          this.enqueue(
+            b.topicId,
+            this.tr(
+              "Для этой машины ещё не настроена папка проекта в BB. Добавь источник проекта и повтори выбор сервера.",
+            ),
+            [[this.button(b, "hosts", this.tr("🖥 Сервер"))]],
+          );
+          return;
+        }
+        b = {
+          ...b,
+          hostId: a.arg,
+          folderId: undefined,
+          providerId: undefined,
+          model: undefined,
+          profileId: undefined,
+          profileTarget: undefined,
+          revision: fresh(),
+        };
+        this.save(b);
+        return this.providers(b);
+      }
       case "projects":
         return this.projects(b.topicId);
       case "menu":
@@ -1176,6 +1326,14 @@ export class ChatBridge {
         }
         b.profileId = undefined;
         b.profileTarget = undefined;
+        if (a.arg) {
+          const f = (await this.folders()).folders.find(
+            (f) => f.id === a.arg && f.projectId === b.projectId,
+          );
+          if (!f) throw Error("section_missing");
+          if (b.hostId && b.hostId !== f.hostId) throw Error("host_changed");
+          b.hostId = f.hostId;
+        }
         b.folderId = a.arg || undefined;
         this.save(b);
         return this.menu(b);
@@ -1196,7 +1354,9 @@ export class ChatBridge {
         if (b.threadId) throw Error("new_thread_required");
         if (
           a.arg &&
-          !(await this.d.sdk.providers.list()).some((p) => p.id === a.arg)
+          !(await this.d.sdk.providers.list(await this.routing(b))).some(
+            (p) => p.id === a.arg,
+          )
         )
           throw Error("provider_missing");
         b.profileId = undefined;
@@ -1248,7 +1408,11 @@ export class ChatBridge {
         }
         const providerId = t?.providerId ?? b.providerId;
         if (providerId !== a.extra) throw Error("provider_changed");
-        const c = await this.d.sdk.providers.models({ providerId });
+        const c = await this.d.sdk.providers.models(
+          t?.environmentId
+            ? { providerId, environmentId: t.environmentId }
+            : { providerId, ...(await this.routing(b)) },
+        );
         if (!c.models.some((m) => m.model === a.arg))
           throw Error("model_missing");
         if (t)

@@ -193,6 +193,18 @@ export const english: Record<string, string> = {
   "\nСрок снят": "\nDue date removed",
 };
 Object.assign(english, {
+  "🖥 Сервер": "🖥 Server",
+  "🎭 Профиль": "🎭 Profile",
+  "🖥 Сервер: ": "🖥 Server: ",
+  "нет папки проекта": "no project folder",
+  "Сервер существующего чата сохраняется. Для другой машины создай новый чат.":
+    "Existing chats keep their server. Create a new chat for another machine.",
+  "🖥 Где запустить новый чат? Модели и профили будут взяты с выбранной машины.":
+    "🖥 Where should the new chat run? Models and profiles come from that machine.",
+  "На выбранном сервере для этого провайдера профили не найдены. Будет использован агент по умолчанию.":
+    "No profiles were found for this provider on the selected server. The default agent will be used.",
+  "Для этой машины ещё не настроена папка проекта в BB. Добавь источник проекта и повтори выбор сервера.":
+    "This machine has no project folder configured in BB yet. Add a project source and select the server again.",
   "Страница ": "Page ",
   "🎭 Выбери профиль агента для нового чата. Модель уже выбрана.":
     "🎭 Choose an agent profile for the new chat. The model is already selected.",
