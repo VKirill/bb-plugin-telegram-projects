@@ -1,3 +1,4 @@
+import { tr } from "./locale.js";
 import { readFileSync } from "node:fs";
 const FILE =
   "/Users/vechkasov/toolkit/service-bots/private/telegram-projects.json";
@@ -39,19 +40,21 @@ export function smsTopic() {
 }
 export function projectList() {
   const s = projectState();
-  if (!s) return "Синхронизация проектов ещё не настроена.";
+  if (!s) return tr("Синхронизация проектов ещё не настроена.");
   return (
-    "📂 Проекты\n\n" +
+    tr("📂 Проекты\n\n") +
     s.topics
       .filter((t) => t.key.startsWith("proj_"))
       .map((t) => t.name)
       .join("\n") +
-    "\n\nОткрой нужную тему в списке тем бота.\n/tasks — активные задачи в текущей теме."
+    tr(
+      "\n\nОткрой нужную тему в списке тем бота.\n/tasks — активные задачи в текущей теме.",
+    )
   );
 }
 export function taskList(threadId?: number) {
   const s = projectState();
-  if (!s) return "Список задач пока недоступен.";
+  if (!s) return tr("Список задач пока недоступен.");
   const bound = s.chatBindings?.find((b) => b.topicId === threadId);
   const project = s.topics.find(
     (t) =>
@@ -60,18 +63,18 @@ export function taskList(threadId?: number) {
   );
   const list = s.tasks.filter((t) => !project || t.projectId === project.key);
   const names: Record<string, string> = {
-    backlog: "в планах",
-    todo: "к выполнению",
-    in_progress: "в работе",
-    in_review: "нужна проверка",
+    backlog: tr("в планах"),
+    todo: tr("к выполнению"),
+    in_progress: tr("в работе"),
+    in_review: tr("нужна проверка"),
   };
   const stale =
     Date.now() - s.updatedAt > 120_000
-      ? "\n⚠️ Данные давно не обновлялись."
+      ? tr("\n⚠️ Данные давно не обновлялись.")
       : "";
   return (
     "📋 " +
-    (project?.name ?? "Активные задачи") +
+    (project?.name ?? tr("Активные задачи")) +
     stale +
     "\n\n" +
     (list.length
@@ -82,13 +85,24 @@ export function taskList(threadId?: number) {
               `${t.key} · ${t.tracker}\n${t.title.slice(0, 140)}\n${names[t.status] ?? t.status}`,
           )
           .join("\n\n")
-      : "Активных задач нет.") +
-    (list.length > 12 ? `\n\nЕщё ${list.length - 12} — в BB.` : "")
+      : tr("Активных задач нет.")) +
+    (list.length > 12
+      ? tr("\n\nЕщё ") + String(list.length - 12) + tr(" — в BB.")
+      : "")
   ).slice(0, 3900);
 }
 export function syncStatus() {
   const s = projectState();
   return s
-    ? `\n📂 Проекты: ${s.topics.filter((t) => t.key.startsWith("proj_")).length}\nСинхронизация: ${s.error ?? (Date.now() - s.updatedAt > 120_000 ? "данные устарели" : "работает")}`
-    : "\n📂 Синхронизация проектов ещё не подключена";
+    ? tr("\n📂 Проекты: ") +
+        String(s.topics.filter((t) => t.key.startsWith("proj_")).length) +
+        tr("\nСинхронизация: ") +
+        String(
+          s.error ??
+            (Date.now() - s.updatedAt > 120_000
+              ? tr("данные устарели")
+              : tr("работает")),
+        ) +
+        ""
+    : tr("\n📂 Синхронизация проектов ещё не подключена");
 }

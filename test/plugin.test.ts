@@ -7,6 +7,18 @@ test("disabled install has no external effects; CLI/RPC survive reload", async (
     pluginId: "telegram-projects",
   });
   await plugin(bb);
+  const prefs = (await harness.behavior.callRpc("preferences", null)) as any;
+  assert.equal(prefs.language, "ru");
+  assert.ok(!("token" in prefs));
+  const { tokenPresent, ...editable } = prefs;
+  await harness.behavior.callRpc("savePreferences", {
+    ...editable,
+    language: "en",
+  });
+  assert.equal(
+    ((await harness.behavior.callRpc("preferences", null)) as any).language,
+    "en",
+  );
   const initial = (await harness.behavior.callRpc("status", null)) as any;
   assert.equal(initial.enabled, false);
   assert.deepEqual(initial.topics, []);

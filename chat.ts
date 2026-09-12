@@ -1,3 +1,4 @@
+import { translate, type Language } from "./companion/aivech/src/locale";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { randomBytes } from "node:crypto";
@@ -122,6 +123,7 @@ const states: Record<string, string> = {
 };
 
 export class ChatBridge {
+  private tr = (s: string) => translate(this.d.language?.() ?? "ru", s);
   private lanes = new Set<number>();
   private disposed = false;
   private lastError: string | null = null;
@@ -136,6 +138,7 @@ export class ChatBridge {
       spool: string;
       baseUrl: string;
       signal: AbortSignal;
+      language?: () => Language;
       rich: () => boolean;
       transcribe?: (v: NonNullable<ChatInput["voice"]>) => Promise<string>;
     },
@@ -196,22 +199,22 @@ export class ChatBridge {
   private nav(b: Binding): Key[][] {
     return [
       [
-        this.button(b, "new", "✚ Новый чат"),
-        this.button(b, "sessions", "💬 Чаты"),
+        this.button(b, "new", this.tr("✚ Новый чат")),
+        this.button(b, "sessions", this.tr("💬 Чаты")),
       ],
       [
-        this.button(b, "menu", "📍 Текущий"),
-        this.button(b, "history", "📖 Последний ответ"),
+        this.button(b, "menu", this.tr("📍 Текущий")),
+        this.button(b, "history", this.tr("📖 Последний ответ")),
       ],
       [
-        this.button(b, "folders", "📁 Раздел"),
-        this.button(b, "providers", "🤖 Агент / модель"),
+        this.button(b, "folders", this.tr("📁 Раздел")),
+        this.button(b, "providers", this.tr("🤖 Агент / модель")),
       ],
       [
-        this.button(b, "stopConfirm", "⏹ Остановить"),
-        this.button(b, "disconnect", "Отключиться"),
+        this.button(b, "stopConfirm", this.tr("⏹ Остановить")),
+        this.button(b, "disconnect", this.tr("Отключиться")),
       ],
-      [this.button(b, "projects", "📂 Все проекты")],
+      [this.button(b, "projects", this.tr("📂 Все проекты"))],
     ];
   }
   private enqueue(
@@ -239,7 +242,7 @@ export class ChatBridge {
   }
   private link(threadId: string): Key {
     return {
-      text: "Открыть чат в BB",
+      text: this.tr("Открыть чат в BB"),
       url:
         this.d.baseUrl +
         "/projects/" +
@@ -286,7 +289,9 @@ export class ChatBridge {
       if (r.state === "claimed") {
         this.enqueue(
           r.input.topicId,
-          "⚠️ BB был перезапущен во время обработки сообщения. Исход действия не подтверждён. Открой /chats и проверь чат перед повторной отправкой.",
+          this.tr(
+            "⚠️ BB был перезапущен во время обработки сообщения. Исход действия не подтверждён. Открой /chats и проверь чат перед повторной отправкой.",
+          ),
           undefined,
           "recovery:" + r.input.updateId,
         );
@@ -316,7 +321,9 @@ export class ChatBridge {
           this.lastError = e instanceof Error ? e.name : "operation_failed";
           this.enqueue(
             r.input.topicId,
-            "⚠️ Не удалось подтвердить действие. Проверь /status и /chats перед повтором; подробности доступны в BB.",
+            this.tr(
+              "⚠️ Не удалось подтвердить действие. Проверь /status и /chats перед повтором; подробности доступны в BB.",
+            ),
             undefined,
             "error:" + r.input.updateId,
           );
@@ -385,7 +392,9 @@ export class ChatBridge {
     };
     this.enqueue(
       topicId,
-      "📂 Выбери проект. Новая тема будет привязана к нему.\n\nВнутри проекта: «Новый чат» или «Чаты» → подключиться → написать сообщение.\n/tasks — задачи; /menu — управление чатом.",
+      this.tr(
+        "📂 Выбери проект. Новая тема будет привязана к нему.\n\nВнутри проекта: «Новый чат» или «Чаты» → подключиться → написать сообщение.\n/tasks — задачи; /menu — управление чатом.",
+      ),
       projects
         .slice(0, 50)
         .map((p) => [this.button(b, "project", label(p.name), p.id)]),
@@ -399,15 +408,36 @@ export class ChatBridge {
       const options = await this.d.sdk.threads.defaultExecutionOptions({
         threadId: t.id,
       });
-      text += `💬 ${t.title ?? t.titleFallback ?? t.id}\n${states[t.status] ?? t.status}\n🤖 ${t.providerId}${options ? " · " + options.model : ""}\n📁 ${(t.environmentId ? (await this.d.sdk.environments.get({ environmentId: t.environmentId })).path : null) ?? "окружение BB"}\n\nСообщение здесь продолжит этот чат. Другие чаты проекта не пересылаются.`;
+      text +=
+        "💬 " +
+        String(t.title ?? t.titleFallback ?? t.id) +
+        "\n" +
+        String(this.tr(states[t.status] ?? t.status) ?? t.status) +
+        "\n🤖 " +
+        String(t.providerId) +
+        "" +
+        String(options ? " · " + options.model : "") +
+        "\n📁 " +
+        String(
+          (t.environmentId
+            ? (
+                await this.d.sdk.environments.get({
+                  environmentId: t.environmentId,
+                })
+              ).path
+            : null) ?? this.tr("окружение BB"),
+        ) +
+        this.tr(
+          "\n\nСообщение здесь продолжит этот чат. Другие чаты проекта не пересылаются.",
+        );
     } else
       text += b.ready
-        ? "✚ Новый чат: напиши первое сообщение.\nНастройки: " +
-          (b.providerId ?? "по умолчанию BB") +
+        ? this.tr("✚ Новый чат: напиши первое сообщение.\nНастройки: ") +
+          (b.providerId ?? this.tr("по умолчанию BB")) +
           (b.model ? " · " + b.model : "") +
-          "\nРаздел: " +
-          (b.folderId ? "выбран в меню" : "корень проекта")
-        : "Чат отключён. Выбери «Новый чат» или «Чаты».";
+          this.tr("\nРаздел: ") +
+          (b.folderId ? this.tr("выбран в меню") : this.tr("корень проекта"))
+        : this.tr("Чат отключён. Выбери «Новый чат» или «Чаты».");
     const keys = this.nav(b);
     if (b.threadId) keys.unshift([this.link(b.threadId)]);
     this.enqueue(b.topicId, text, keys);
@@ -451,18 +481,27 @@ export class ChatBridge {
     const pages: Key[] = [];
     if (offset > 0)
       pages.push(
-        this.button(b, "sessions", "← Назад", String(Math.max(0, offset - 8))),
+        this.button(
+          b,
+          "sessions",
+          this.tr("← Назад"),
+          String(Math.max(0, offset - 8)),
+        ),
       );
     if (list.length > 8)
-      pages.push(this.button(b, "sessions", "Далее →", String(offset + 8)));
+      pages.push(
+        this.button(b, "sessions", this.tr("Далее →"), String(offset + 8)),
+      );
     if (pages.length) keys.push(pages);
     keys.push([
-      this.button(b, "new", "✚ Новый чат"),
-      this.button(b, "menu", "В меню"),
+      this.button(b, "new", this.tr("✚ Новый чат")),
+      this.button(b, "menu", this.tr("В меню")),
     ]);
     this.enqueue(
       b.topicId,
-      "💬 Чаты проекта\nВыбери чат, чтобы посмотреть его состояние и подключиться.\nСтраница " +
+      this.tr(
+        "💬 Чаты проекта\nВыбери чат, чтобы посмотреть его состояние и подключиться.\nСтраница ",
+      ) +
         (offset / 8 + 1),
       keys,
     );
@@ -479,7 +518,9 @@ export class ChatBridge {
     if (b.threadId) {
       this.enqueue(
         b.topicId,
-        "Раздел существующего чата сохраняется. Нажми «Новый чат», затем выбери раздел.",
+        this.tr(
+          "Раздел существующего чата сохраняется. Нажми «Новый чат», затем выбери раздел.",
+        ),
         this.nav(b),
       );
       return;
@@ -487,16 +528,18 @@ export class ChatBridge {
     const f = await this.folders();
     this.enqueue(
       b.topicId,
-      "📁 Где создать новый чат?\nИнструкции и файлы будут взяты из выбранного каталога.",
+      this.tr(
+        "📁 Где создать новый чат?\nИнструкции и файлы будут взяты из выбранного каталога.",
+      ),
       [
-        [this.button(b, "folder", "Корень проекта", "")],
+        [this.button(b, "folder", this.tr("Корень проекта"), "")],
         ...f.folders
           .filter((f) => f.projectId === b.projectId)
           .slice(0, 40)
           .map((f) => [
             this.button(b, "folder", label(f.name + " · " + f.path, 60), f.id),
           ]),
-        [this.button(b, "menu", "В меню")],
+        [this.button(b, "menu", this.tr("В меню"))],
       ],
     );
   }
@@ -517,11 +560,13 @@ export class ChatBridge {
     if (b.threadId) {
       this.enqueue(
         b.topicId,
-        "Модель текущего чата можно выбрать ниже. Другой агент выбирается для нового чата.",
+        this.tr(
+          "Модель текущего чата можно выбрать ниже. Другой агент выбирается для нового чата.",
+        ),
         [
-          [this.button(b, "models", "Модель текущего чата")],
-          [this.button(b, "newAgent", "Другой агент → новый чат")],
-          [this.button(b, "menu", "В меню")],
+          [this.button(b, "models", this.tr("Модель текущего чата"))],
+          [this.button(b, "newAgent", this.tr("Другой агент → новый чат"))],
+          [this.button(b, "menu", this.tr("В меню"))],
         ],
       );
       return;
@@ -529,13 +574,13 @@ export class ChatBridge {
     const providers = await this.d.sdk.providers.list();
     this.enqueue(
       b.topicId,
-      "🤖 Агент для нового чата. Его модели берутся из настроек BB.",
+      this.tr("🤖 Агент для нового чата. Его модели берутся из настроек BB."),
       [
-        [this.button(b, "provider", "По умолчанию BB", "")],
+        [this.button(b, "provider", this.tr("По умолчанию BB"), "")],
         ...providers
           .filter((p) => p.available)
           .map((p) => [this.button(b, "provider", label(p.displayName), p.id)]),
-        [this.button(b, "menu", "В меню")],
+        [this.button(b, "menu", this.tr("В меню"))],
       ],
     );
   }
@@ -558,18 +603,22 @@ export class ChatBridge {
         this.button(b, "model", label(m.displayName), m.model, providerId),
       ]);
     if (offset > 0)
-      keys.push([this.button(b, "models", "← Назад", String(offset - 8))]);
+      keys.push([
+        this.button(b, "models", this.tr("← Назад"), String(offset - 8)),
+      ]);
     if (catalog.models.length > offset + 8)
-      keys.push([this.button(b, "models", "Далее →", String(offset + 8))]);
-    keys.push([this.button(b, "menu", "В меню")]);
+      keys.push([
+        this.button(b, "models", this.tr("Далее →"), String(offset + 8)),
+      ]);
+    keys.push([this.button(b, "menu", this.tr("В меню"))]);
     this.enqueue(
       b.topicId,
-      "Модель " +
+      this.tr("Модель ") +
         providerId +
         "\n" +
         (t
-          ? "Применится к текущему чату, когда он свободен."
-          : "Применится к новому чату."),
+          ? this.tr("Применится к текущему чату, когда он свободен.")
+          : this.tr("Применится к новому чату.")),
       keys,
     );
   }
@@ -585,7 +634,7 @@ export class ChatBridge {
         a.topicId !== input.topicId ||
         a.revision !== (b?.revision ?? "lobby")
       ) {
-        this.enqueue(input.topicId, "Кнопка устарела. Открой /menu.");
+        this.enqueue(input.topicId, this.tr("Кнопка устарела. Открой /menu."));
         return;
       }
       this.s.put("chat:button:" + id, { ...a, used: true });
@@ -601,9 +650,11 @@ export class ChatBridge {
           await this.menu(this.binding(t.threadId)!);
           this.enqueue(
             input.topicId,
-            "Меню отправлено в тему «" +
+            this.tr("Меню отправлено в тему «") +
               t.name +
-              "». Для отдельного разговора создай тему Telegram и выбери в ней /project.",
+              this.tr(
+                "». Для отдельного разговора создай тему Telegram и выбери в ней /project.",
+              ),
           );
           return;
         }
@@ -645,7 +696,9 @@ export class ChatBridge {
     if (!b) {
       this.enqueue(
         input.topicId,
-        "Сначала привяжи эту тему командой /project. В теме SMS сообщения не отправляются агенту.",
+        this.tr(
+          "Сначала привяжи эту тему командой /project. В теме SMS сообщения не отправляются агенту.",
+        ),
       );
       return;
     }
@@ -684,7 +737,9 @@ export class ChatBridge {
     else if (text.startsWith("/")) {
       this.enqueue(
         input.topicId,
-        "Неизвестная команда. /menu — управление, /say /команда — отправить команду как текст агенту.",
+        this.tr(
+          "Неизвестная команда. /menu — управление, /say /команда — отправить команду как текст агенту.",
+        ),
       );
       return;
     }
@@ -692,7 +747,7 @@ export class ChatBridge {
       if (!this.d.transcribe) {
         this.enqueue(
           input.topicId,
-          "Транскрибация сейчас недоступна. Отправь текст.",
+          this.tr("Транскрибация сейчас недоступна. Отправь текст."),
         );
         return;
       }
@@ -701,16 +756,23 @@ export class ChatBridge {
       } catch {
         this.enqueue(
           input.topicId,
-          "Не удалось распознать голос. Отправь текст или проверь транскрибацию в настройках BB. Ограничение: 10 минут и 15 МБ.",
+          this.tr(
+            "Не удалось распознать голос. Отправь текст или проверь транскрибацию в настройках BB. Ограничение: 10 минут и 15 МБ.",
+          ),
         );
         return;
       }
-      this.enqueue(input.topicId, "🎙 Распознано:\n" + text.slice(0, 3000));
+      this.enqueue(
+        input.topicId,
+        this.tr("🎙 Распознано:\n") + text.slice(0, 3000),
+      );
     }
     if (!text) {
       this.enqueue(
         input.topicId,
-        "Отправь текст или голосовое сообщение. Вложения пока открывай в BB.",
+        this.tr(
+          "Отправь текст или голосовое сообщение. Вложения пока открывай в BB.",
+        ),
       );
       return;
     }
@@ -733,7 +795,9 @@ export class ChatBridge {
       if (pending.some((i) => i.status === "pending")) {
         this.enqueue(
           input.topicId,
-          "В чате есть вопрос. Ответь через кнопку или ответом на его карточку. Если форма сложная — открой BB.",
+          this.tr(
+            "В чате есть вопрос. Ответь через кнопку или ответом на его карточку. Если форма сложная — открой BB.",
+          ),
           [[this.link(b.threadId)]],
         );
         return;
@@ -764,7 +828,9 @@ export class ChatBridge {
     }
     this.enqueue(
       input.topicId,
-      "📨 Сообщение принято BB. Ответ придёт сюда.\n/stop — остановить, /menu — текущий чат.",
+      this.tr(
+        "📨 Сообщение принято BB. Ответ придёт сюда.\n/stop — остановить, /menu — текущий чат.",
+      ),
       [[this.link(b.threadId!)]],
       "accepted:" + input.updateId,
     );
@@ -781,12 +847,30 @@ export class ChatBridge {
         const t = await this.validThread(b, a.arg!);
         this.enqueue(
           b.topicId,
-          `💬 ${t.title ?? t.titleFallback ?? t.id}\n${states[t.status]}\n🤖 ${t.providerId}\n📁 ${(t.environmentId ? (await this.d.sdk.environments.get({ environmentId: t.environmentId })).path : null) ?? "BB"}\n\nПодключение будет пересылать новые ответы и вопросы этого чата в текущую тему.`,
+          "💬 " +
+            String(t.title ?? t.titleFallback ?? t.id) +
+            "\n" +
+            String(this.tr(states[t.status] ?? t.status)) +
+            "\n🤖 " +
+            String(t.providerId) +
+            "\n📁 " +
+            String(
+              (t.environmentId
+                ? (
+                    await this.d.sdk.environments.get({
+                      environmentId: t.environmentId,
+                    })
+                  ).path
+                : null) ?? "BB",
+            ) +
+            this.tr(
+              "\n\nПодключение будет пересылать новые ответы и вопросы этого чата в текущую тему.",
+            ),
           [
-            [this.button(b, "connect", "Подключиться", t.id)],
-            [this.button(b, "peek", "Последний ответ", t.id)],
+            [this.button(b, "connect", this.tr("Подключиться"), t.id)],
+            [this.button(b, "peek", this.tr("Последний ответ"), t.id)],
             [this.link(t.id)],
-            [this.button(b, "sessions", "← Чаты")],
+            [this.button(b, "sessions", this.tr("← Чаты"))],
           ],
         );
         return;
@@ -803,7 +887,9 @@ export class ChatBridge {
         ) {
           this.enqueue(
             b.topicId,
-            "Этот чат уже подключён к другой теме. Сначала отключи его там.",
+            this.tr(
+              "Этот чат уже подключён к другой теме. Сначала отключи его там.",
+            ),
           );
           return;
         }
@@ -889,7 +975,9 @@ export class ChatBridge {
         if (t && t.status !== "idle" && t.status !== "error") {
           this.enqueue(
             b.topicId,
-            "Смена модели доступна после завершения или остановки текущего запуска.",
+            this.tr(
+              "Смена модели доступна после завершения или остановки текущего запуска.",
+            ),
           );
           return;
         }
@@ -903,7 +991,11 @@ export class ChatBridge {
         b.model = a.arg;
         b.providerId = providerId;
         this.save(b);
-        this.enqueue(b.topicId, "Модель выбрана: " + a.arg, this.nav(b));
+        this.enqueue(
+          b.topicId,
+          this.tr("Модель выбрана: ") + a.arg,
+          this.nav(b),
+        );
         return;
       }
       case "history":
@@ -920,8 +1012,8 @@ export class ChatBridge {
         });
         this.enqueue(
           b.topicId,
-          "📖 Последний ответ\n\n" +
-            (result.output ?? "В этом чате ещё нет ответа."),
+          this.tr("📖 Последний ответ\n\n") +
+            (result.output ?? this.tr("В этом чате ещё нет ответа.")),
           [[this.link(id)]],
           fresh(),
           this.d.rich(),
@@ -932,10 +1024,10 @@ export class ChatBridge {
         if (b.threadId)
           this.enqueue(
             b.topicId,
-            "Остановить текущий запуск? Чат и история сохранятся.",
+            this.tr("Остановить текущий запуск? Чат и история сохранятся."),
             [
-              [this.button(b, "stop", "Да, остановить", b.threadId)],
-              [this.button(b, "menu", "Назад")],
+              [this.button(b, "stop", this.tr("Да, остановить"), b.threadId)],
+              [this.button(b, "menu", this.tr("Назад"))],
             ],
           );
         else await this.menu(b);
@@ -946,7 +1038,7 @@ export class ChatBridge {
         await this.d.sdk.threads.stop({ threadId: b.threadId! });
         this.enqueue(
           b.topicId,
-          "Команда остановки отправлена BB.",
+          this.tr("Команда остановки отправлена BB."),
           this.nav(b),
         );
         return;
@@ -961,7 +1053,7 @@ export class ChatBridge {
       interactionId: a.arg!,
     });
     if (interaction.status !== "pending") {
-      this.enqueue(b.topicId, "Этот вопрос уже закрыт в BB.");
+      this.enqueue(b.topicId, this.tr("Этот вопрос уже закрыт в BB."));
       return;
     }
     const payload = interaction.payload;
@@ -1000,7 +1092,7 @@ export class ChatBridge {
         },
       });
     } else throw Error("unsupported_question");
-    this.enqueue(b.topicId, "Ответ передан BB.");
+    this.enqueue(b.topicId, this.tr("Ответ передан BB."));
   }
   private async answerText(
     b: Binding,
@@ -1010,7 +1102,7 @@ export class ChatBridge {
     if (q.threadId !== b.threadId || q.revision !== b.revision) {
       this.enqueue(
         b.topicId,
-        "Вопрос относится к прежнему подключению. Открой /menu.",
+        this.tr("Вопрос относится к прежнему подключению. Открой /menu."),
       );
       return;
     }
@@ -1019,7 +1111,7 @@ export class ChatBridge {
       interactionId: q.interactionId,
     });
     if (i.status !== "pending") {
-      this.enqueue(b.topicId, "Этот вопрос уже закрыт.");
+      this.enqueue(b.topicId, this.tr("Этот вопрос уже закрыт."));
       return;
     }
     if (
@@ -1027,7 +1119,10 @@ export class ChatBridge {
       i.payload.questions.length !== 1 ||
       !i.payload.questions[0].allowFreeText
     ) {
-      this.enqueue(b.topicId, "Для этого вопроса выбери кнопку или открой BB.");
+      this.enqueue(
+        b.topicId,
+        this.tr("Для этого вопроса выбери кнопку или открой BB."),
+      );
       return;
     }
     const question = i.payload.questions[0];
@@ -1039,17 +1134,17 @@ export class ChatBridge {
         answers: { [question.id]: { selected: [], freeText: text } },
       },
     });
-    this.enqueue(b.topicId, "Ответ передан BB.");
+    this.enqueue(b.topicId, this.tr("Ответ передан BB."));
   }
   private question(b: Binding, i: PendingInteraction) {
     const id = "question:" + b.revision + ":" + i.id;
     if (this.s.get("chat:out:" + id)) return;
-    let text = "❓ BB ждёт ответа\n";
+    let text = this.tr("❓ BB ждёт ответа\n");
     const keys: Key[][] = [];
     if (i.payload.kind === "approval") {
       const p = i.payload;
       text +=
-        "Требуется разрешение\n" +
+        this.tr("Требуется разрешение\n") +
         (p.reason ?? "") +
         "\n" +
         JSON.stringify(p.subject, null, 2).slice(0, 2400);
@@ -1059,7 +1154,9 @@ export class ChatBridge {
             this.button(
               b,
               "resolve",
-              decision === "allow_once" ? "Разрешить один раз" : "Отказать",
+              decision === "allow_once"
+                ? this.tr("Разрешить один раз")
+                : this.tr("Отказать"),
               i.id,
               decision,
             ),
@@ -1077,10 +1174,11 @@ export class ChatBridge {
               this.button(b, "resolve", label(o.label), i.id, o.value),
             ]);
         if (q.allowFreeText)
-          text +=
-            "\n\nМожно ответить текстом через «Ответить» на это сообщение.";
-      } else text += "\n\nНесколько вопросов: открой форму в BB.";
-    } else text += "Эта форма открывается в BB.";
+          text += this.tr(
+            "\n\nМожно ответить текстом через «Ответить» на это сообщение.",
+          );
+      } else text += this.tr("\n\nНесколько вопросов: открой форму в BB.");
+    } else text += this.tr("Эта форма открывается в BB.");
     keys.push([this.link(b.threadId!)]);
     this.enqueue(b.topicId, text, keys, id);
     this.s.put("chat:question-out:" + id, {
@@ -1174,8 +1272,8 @@ export class ChatBridge {
             this.enqueue(
               b.topicId,
               event.data.status === "failed"
-                ? "⚠️ Запуск завершился ошибкой. Подробности в BB."
-                : "⏹ Запуск остановлен.",
+                ? this.tr("⚠️ Запуск завершился ошибкой. Подробности в BB.")
+                : this.tr("⏹ Запуск остановлен."),
               [[this.link(b.threadId)]],
               "end:" + b.revision + ":" + event.seq,
             );
@@ -1188,8 +1286,8 @@ export class ChatBridge {
         for (const i of pending.filter((i) => i.status === "pending"))
           this.question(b, i);
         const status = pending.some((i) => i.status === "pending")
-          ? "нужен ответ"
-          : (states[t.status] ?? t.status) +
+          ? this.tr("нужен ответ")
+          : (this.tr(states[t.status] ?? t.status) ?? t.status) +
             (t.status === "active" && b.activity ? " · " + b.activity : "");
         if (
           status !== b.status &&
@@ -1199,10 +1297,15 @@ export class ChatBridge {
           this.enqueue(
             b.topicId,
             "📍 " +
-              label(t.title ?? t.titleFallback ?? "Чат BB", 75) +
+              label(t.title ?? t.titleFallback ?? this.tr("Чат BB"), 75) +
               "\n" +
               status,
-            [[this.button(b, "menu", "Управление"), this.link(b.threadId)]],
+            [
+              [
+                this.button(b, "menu", this.tr("Управление")),
+                this.link(b.threadId),
+              ],
+            ],
             "progress:" + b.revision + ":" + fresh(),
             false,
             this.s.get<number>("chat:progress:" + b.topicId + ":" + b.revision),

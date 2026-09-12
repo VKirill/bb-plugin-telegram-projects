@@ -12,19 +12,19 @@ import {
 } from "./model";
 const exec = promisify(execFile);
 export function telegram(configFile: string, signal: AbortSignal): Telegram {
-  let token: string;
-  try {
-    const c = JSON.parse(readFileSync(configFile, "utf8"));
-    if (c.chat_id !== OWNER_ID || !c.enabled || typeof c.token !== "string")
-      throw 0;
-    token = c.token;
-  } catch {
-    throw new Error("bot_configuration_unavailable");
-  }
   return async <T>(
     method: string,
     body: Record<string, unknown>,
   ): Promise<T> => {
+    let token: string;
+    try {
+      const c = JSON.parse(readFileSync(configFile, "utf8"));
+      if (c.chat_id !== OWNER_ID || !c.enabled || typeof c.token !== "string")
+        throw 0;
+      token = c.token;
+    } catch {
+      throw new Error("bot_configuration_unavailable");
+    }
     let r: Response;
     try {
       r = await fetch(`https://api.telegram.org/bot${token}/${method}`, {

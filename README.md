@@ -1,6 +1,16 @@
 # Telegram Projects — BB в Telegram
 
-Персональный плагин BB для @aivech_bot. **Версия 0.2.0**: темы проектов, уведомления Tasks и двустороннее общение с настоящими сессиями BB. На Mac mini работают плагин и отдельный companion, принимающий входящие Telegram-сообщения и доставляющий SMS.
+Персональный плагин BB для @aivech_bot. **Версия 0.3.0**: темы проектов, уведомления Tasks и двустороннее общение с настоящими сессиями BB. На Mac mini работают плагин и отдельный companion, принимающий входящие Telegram-сообщения и доставляющий SMS.
+
+## Настройки бота / Bot settings
+
+Открой **Telegram** в боковом меню BB. На странице доступны проверка и замена токена текущего бота, диагностика BotFather, язык RU/EN, синхронизация, общение, Rich Messages, уведомления Tasks, звук, удаление тем и публичный URL BB. Нажми «Сохранить настройки», чтобы применить язык и поведение.
+
+**Check connection** uses getMe/getWebhookInfo without sending messages. It reports token validity, bot identity, Threaded Mode, user-created topics and webhook conflicts. Enable Threaded Mode; disable “Disallow users to create new threads” for manual topics. Restrict bot usage is optional and can only be checked manually. Bot Management and Bot-to-Bot are not needed for BB agents. [Official API fields](https://core.telegram.org/bots/api#user).
+
+Token replacement is restricted to the existing personal bot. It is saved atomically with mode 0600, never returned to the frontend. The receiver reloads its credentials through the existing launchd KeepAlive service. Another bot/owner requires a migration; this remains a personal plugin, not general marketplace onboarding.
+
+Language applies to new menus, command descriptions, questions, progress and service notifications; user content and agent output are preserved. Managed topic introductions are updated. Already queued messages keep their original language. Russian remains the default.
 
 ## Начать
 

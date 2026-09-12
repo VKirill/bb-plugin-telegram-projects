@@ -1,3 +1,4 @@
+import { translate, type Language } from "./companion/aivech/src/locale";
 import { z } from "zod";
 export const OWNER_ID = 259034221;
 export const BOT_ID = 8461763634;
@@ -77,26 +78,55 @@ export function changes(prev: Task | undefined, next: Task): string[] {
   if (prev.dueDate !== next.dueDate) out.push("due");
   return out;
 }
-export function formatEvent(e: Event) {
+export function formatEvent(e: Event, language: Language = "ru") {
+  const tr = (s: string) => translate(language, s);
   const heading =
     e.kind === "test"
-      ? "🧪 Проверка уведомлений"
+      ? tr("🧪 Проверка уведомлений")
       : e.kind === "worker_error"
-        ? "🔴 Ошибка исполнителя"
+        ? tr("🔴 Ошибка исполнителя")
         : e.kind === "created"
-          ? "🆕 Новая задача"
+          ? tr("🆕 Новая задача")
           : e.kind === "started"
-            ? "▶️ Исполнитель начал работу"
+            ? tr("▶️ Исполнитель начал работу")
             : e.kind === "due"
-              ? "📅 Изменён срок"
+              ? tr("📅 Изменён срок")
               : e.status === "in_review"
-                ? "👀 Нужна проверка"
+                ? tr("👀 Нужна проверка")
                 : e.status === "done"
-                  ? "✅ Задача завершена"
+                  ? tr("✅ Задача завершена")
                   : e.status === "canceled"
-                    ? "⏹ Задача отменена"
-                    : "🔄 Статус задачи";
-  return `<b>${heading}</b>\n${escapeHtml(e.tracker.slice(0, 150))} · <code>${escapeHtml(e.key)}</code>\n\n<b>${escapeHtml(e.title.slice(0, 500))}</b>\nСтатус: ${escapeHtml(states[e.status] ?? e.status)}${e.dueDate ? "\nСрок: " + escapeHtml(e.dueDate) : e.kind === "due" ? "\nСрок снят" : ""}\n\n<i>${escapeHtml(new Date(e.at).toLocaleString("ru-RU", { timeZone: "Europe/Madrid" }))} · Мадрид</i>`;
+                    ? tr("⏹ Задача отменена")
+                    : tr("🔄 Статус задачи");
+  return (
+    "<b>" +
+    String(heading) +
+    "</b>\n" +
+    String(escapeHtml(e.tracker.slice(0, 150))) +
+    " · <code>" +
+    String(escapeHtml(e.key)) +
+    "</code>\n\n<b>" +
+    String(escapeHtml(e.title.slice(0, 500))) +
+    tr("</b>\nСтатус: ") +
+    String(escapeHtml(tr(states[e.status] ?? e.status))) +
+    "" +
+    String(
+      e.dueDate
+        ? tr("\nСрок: ") + escapeHtml(e.dueDate)
+        : e.kind === "due"
+          ? tr("\nСрок снят")
+          : "",
+    ) +
+    "\n\n<i>" +
+    String(
+      escapeHtml(
+        new Date(e.at).toLocaleString(language === "en" ? "en-GB" : "ru-RU", {
+          timeZone: "Europe/Madrid",
+        }),
+      ),
+    ) +
+    tr(" · Мадрид</i>")
+  );
 }
 export function ingest(
   store: Store,

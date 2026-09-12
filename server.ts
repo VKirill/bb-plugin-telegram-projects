@@ -1,3 +1,11 @@
+import { translate } from "./companion/aivech/src/locale";
+import {
+  preferencesSchema,
+  diagnosisSchema,
+  savedToken,
+  diagnose,
+  persistToken,
+} from "./settings";
 import { ChatBridge } from "./chat";
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
@@ -54,11 +62,30 @@ const statusSchema = z.object({
   tasks: z.number(),
 });
 export const rpcContract = defineRpcContract({
+  preferences: {
+    input: z.null(),
+    output: preferencesSchema.extend({ tokenPresent: z.boolean() }),
+  },
+  savePreferences: { input: preferencesSchema, output: z.boolean() },
+  checkConnection: {
+    input: z.object({ token: z.string().max(200).optional() }),
+    output: diagnosisSchema,
+  },
+  saveToken: {
+    input: z.object({ token: z.string().max(200) }),
+    output: diagnosisSchema,
+  },
   status: { input: z.null(), output: statusSchema },
   sync: { input: z.null(), output: statusSchema },
 });
 export default async function plugin(bb: BbPluginApi) {
   const settings = bb.settings.define({
+    language: {
+      type: "select",
+      label: "Language / Язык",
+      options: ["ru", "en"],
+      default: "ru",
+    },
     enabled: {
       type: "boolean",
       label: "Синхронизация с Telegram",
@@ -182,11 +209,65 @@ export default async function plugin(bb: BbPluginApi) {
   }
   async function run() {
     const cfg = await settings.get();
+    const tr = (s: string) => translate(cfg.language as "ru" | "en", s);
     if (!cfg.enabled) return;
     if ((store.get<number>("retryAt") ?? 0) > Date.now()) return;
     if (!store.get("trackingSince")) store.put("trackingSince", Date.now());
     const tg = telegram(cfg.configFile, lifetime.signal);
     const me = await checkBot(tg);
+    if (store.get("commandsLanguage") !== cfg.language) {
+      const labels =
+        cfg.language === "en"
+          ? [
+              "Bind this topic to a project",
+              "Chat menu",
+              "New chat",
+              "Find and connect chats",
+              "Agent and model",
+              "Choose a section",
+              "Last reply",
+              "Stop the run",
+              "Disconnect this chat",
+              "Active tasks",
+              "Service status",
+              "Help",
+            ]
+          : [
+              "Привязать тему к проекту",
+              "Меню чата",
+              "Новый чат",
+              "Найти и подключить чат",
+              "Агент и модель",
+              "Выбрать раздел",
+              "Последний ответ",
+              "Остановить запуск",
+              "Отключить чат",
+              "Активные задачи",
+              "Состояние сервисов",
+              "Помощь",
+            ];
+      const commands = [
+        "project",
+        "menu",
+        "new",
+        "chats",
+        "model",
+        "section",
+        "history",
+        "stop",
+        "disconnect",
+        "tasks",
+        "status",
+        "help",
+      ].map((command, i) => ({ command, description: labels[i] }));
+      for (const language_code of ["", "ru", "en"])
+        await tg("setMyCommands", {
+          commands,
+          scope: { type: "chat", chat_id: OWNER_ID },
+          language_code,
+        });
+      store.put("commandsLanguage", cfg.language);
+    }
     username = me.username;
     topicsEnabled = me.topics;
     // A complete project snapshot is the only authority for removals. Failed reads never reconcile.
@@ -266,7 +347,7 @@ export default async function plugin(bb: BbPluginApi) {
       await publishProjection(cfg.projectionFile, allTasks);
       return;
     }
-    await ensureTopic(store, tg, "navigation", "🧭 Навигация");
+    await ensureTopic(store, tg, "navigation", tr("🧭 Навигация"));
     await ensureTopic(store, tg, "sms", "📱 SMS");
     await reconcileProjects(store, tg, projects, cfg.deleteTopics);
     const base = new URL(cfg.appUrl);
@@ -276,19 +357,27 @@ export default async function plugin(bb: BbPluginApi) {
       if (!topic.threadId || topic.missingSince) continue;
       let text =
         topic.key === "navigation"
-          ? "<b>🧭 Рабочее пространство Кирилла</b>\n\n" +
+          ? tr("<b>🧭 Рабочее пространство Кирилла</b>\n\n") +
             projects.map((p) => "📂 " + escapeHtml(p.name)).join("\n") +
-            "\n\nВ темах проектов — чаты BB и уведомления Tasks.\n📱 SMS — коды и сообщения на телефон.\n\n/project — привязать новую тему\n/chats — чаты BB\n/model — агент и модель\n/tasks — активные задачи\n/menu — управление"
+            tr(
+              "\n\nВ темах проектов — чаты BB и уведомления Tasks.\n📱 SMS — коды и сообщения на телефон.\n\n/project — привязать новую тему\n/chats — чаты BB\n/model — агент и модель\n/tasks — активные задачи\n/menu — управление",
+            )
           : topic.key === "sms"
-            ? "<b>📱 SMS</b>\n\nЗдесь будут новые сообщения на телефон и кнопки копирования кодов."
-            : `<b>${escapeHtml(topic.name)}</b>\n\nЗдесь появляются события задач этого проекта.\n\n/menu — управление чатом BB\n/new — новая сессия\n/chats — подключиться к существующему чату\n/model — агент и модель\n/tasks — задачи проекта\n\nВ Telegram приходят только ответы подключённого чата и события Tasks.`;
+            ? tr(
+                "<b>📱 SMS</b>\n\nЗдесь будут новые сообщения на телефон и кнопки копирования кодов.",
+              )
+            : "<b>" +
+              String(escapeHtml(topic.name)) +
+              tr(
+                "</b>\n\nЗдесь появляются события задач этого проекта.\n\n/menu — управление чатом BB\n/new — новая сессия\n/chats — подключиться к существующему чату\n/model — агент и модель\n/tasks — задачи проекта\n\nВ Telegram приходят только ответы подключённого чата и события Tasks.",
+              );
       if (topic.introText === text) continue;
       const payload = {
         text,
         parse_mode: "HTML",
         link_preview_options: { is_disabled: true },
         reply_markup: {
-          inline_keyboard: [[{ text: "Открыть BB", url: base.origin }]],
+          inline_keyboard: [[{ text: tr("Открыть BB"), url: base.origin }]],
         },
       };
       if (topic.introId)
@@ -319,7 +408,7 @@ export default async function plugin(bb: BbPluginApi) {
       // Tasks detail route verified through the live Tasks UI.
       await tg("sendMessage", {
         message_thread_id: topic.threadId,
-        text: formatEvent(e),
+        text: formatEvent(e, cfg.language as "ru" | "en"),
         parse_mode: "HTML",
         disable_notification: !(cfg.soundOnReview && e.urgent),
         link_preview_options: { is_disabled: true },
@@ -329,8 +418,8 @@ export default async function plugin(bb: BbPluginApi) {
               {
                 text:
                   e.kind === "test"
-                    ? "Открыть Telegram Projects"
-                    : `Открыть ${e.key}`,
+                    ? tr("Открыть Telegram Projects")
+                    : tr("Открыть ") + String(e.key) + "",
                 url:
                   base.origin +
                   (e.kind === "test"
@@ -400,6 +489,35 @@ export default async function plugin(bb: BbPluginApi) {
     return flight;
   }
   bb.rpc.register(rpcContract, {
+    preferences: async () => {
+      const c = await settings.get();
+      return {
+        ...(Object.fromEntries(
+          Object.keys(preferencesSchema.shape).map((k) => [
+            k,
+            c[k as keyof typeof c],
+          ]),
+        ) as z.infer<typeof preferencesSchema>),
+        tokenPresent: Boolean(savedToken(c.configFile)),
+      };
+    },
+    savePreferences: async (value) => {
+      await settings.experimental_set(value);
+      return true;
+    },
+    checkConnection: async ({ token }) => {
+      const c = await settings.get();
+      return diagnose(token?.trim() || savedToken(c.configFile));
+    },
+    saveToken: async ({ token }) => {
+      const c = await settings.get();
+      const clean = token.trim();
+      const result = await diagnose(clean);
+      if (result.valid && result.sameBot && !result.error && !result.webhook) {
+        persistToken(c.configFile, clean);
+      }
+      return result;
+    },
     status: () => status(),
     sync: async () => {
       await sync();
@@ -585,11 +703,15 @@ export default async function plugin(bb: BbPluginApi) {
       const control =
         "/Users/vechkasov/toolkit/service-bots/private/telegram-chat.json";
       let rich = true;
+      let currentUrl = "";
+      let language: "ru" | "en" = "ru";
       let activeAbort: AbortController | undefined;
       while (!signal.aborted) {
         const cfg = await settings.get();
         if (cfg.enabled && cfg.chatEnabled) {
           rich = cfg.richReplies;
+          currentUrl = new URL(cfg.appUrl).origin;
+          language = cfg.language as "ru" | "en";
           if (!bridge) {
             mkdirSync(spool, { recursive: true, mode: 0o700 });
             activeAbort = new AbortController();
@@ -603,9 +725,12 @@ export default async function plugin(bb: BbPluginApi) {
               sdk: bb.sdk,
               tg: telegram(cfg.configFile, bridgeSignal),
               spool,
-              baseUrl: new URL(cfg.appUrl).origin,
+              get baseUrl() {
+                return currentUrl;
+              },
               signal: bridgeSignal,
               rich: () => rich,
+              language: () => language,
               transcribe: (v) =>
                 transcribeTelegramVoice(
                   cfg.configFile,
@@ -618,7 +743,11 @@ export default async function plugin(bb: BbPluginApi) {
           }
           writeFileSync(
             control + ".tmp",
-            JSON.stringify({ enabled: true, updatedAt: Date.now() }),
+            JSON.stringify({
+              enabled: true,
+              language: cfg.language,
+              updatedAt: Date.now(),
+            }),
             { mode: 0o600 },
           );
           renameSync(control + ".tmp", control);
@@ -630,7 +759,11 @@ export default async function plugin(bb: BbPluginApi) {
           if (existsSync(control))
             writeFileSync(
               control,
-              JSON.stringify({ enabled: false, updatedAt: Date.now() }),
+              JSON.stringify({
+                enabled: false,
+                language: cfg.language,
+                updatedAt: Date.now(),
+              }),
               { mode: 0o600 },
             );
         }

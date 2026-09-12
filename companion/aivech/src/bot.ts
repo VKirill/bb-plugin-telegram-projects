@@ -1,3 +1,4 @@
+import { tr } from "./locale.js";
 import { chatEnabled, saveChatUpdate } from "./chat.js";
 import { Bot, Context } from "grammy";
 import { projectList, taskList, syncStatus } from "./projects.js";
@@ -23,7 +24,7 @@ export function createBot(
   bot.use(async (ctx, next) => {
     if (bridge.enabled() && bridge.save(ctx)) {
       if (ctx.callbackQuery)
-        await ctx.answerCallbackQuery({ text: "Принято" }).catch(() => {});
+        await ctx.answerCallbackQuery({ text: tr("Принято") }).catch(() => {});
       return;
     }
     await next();
@@ -33,7 +34,9 @@ export function createBot(
   bot.command(["start", "help"], (ctx) =>
     reply(
       ctx,
-      "🧭 Рабочее пространство Кирилла\n\n📂 Темы проектов — события Tasks: запуск, проверка, завершение, ошибки исполнителей и сроки.\n📱 SMS — сообщения на телефон и кнопки копирования кодов.\n\n/projects — проекты\n/tasks — активные задачи в текущей теме\n/status — состояние сервисов\n\nОбычные чаты BB сюда не пересылаются.",
+      tr(
+        "🧭 Рабочее пространство Кирилла\n\n📂 Темы проектов — события Tasks: запуск, проверка, завершение, ошибки исполнителей и сроки.\n📱 SMS — сообщения на телефон и кнопки копирования кодов.\n\n/projects — проекты\n/tasks — активные задачи в текущей теме\n/status — состояние сервисов\n\nОбычные чаты BB сюда не пересылаются.",
+      ),
     ),
   );
   bot.command("projects", (ctx) => reply(ctx, projectList()));
