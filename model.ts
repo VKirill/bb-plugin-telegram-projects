@@ -37,6 +37,7 @@ export type Topic = {
   introText?: string;
 };
 export type Event = {
+  agencyTopicId?: number;
   id: string;
   projectId: string;
   taskId: string;
@@ -81,7 +82,7 @@ export function changes(prev: Task | undefined, next: Task): string[] {
 export function formatEvent(e: Event, language: Language = "ru") {
   const tr = (s: string) => translate(language, s);
   const heading =
-    e.kind === "test"
+    e.kind === "agency_question" ? "❓ Агентство: нужен ответ" : e.kind === "agency_notice" ? "Агентство · уведомление" : e.kind === "test"
       ? tr("🧪 Проверка уведомлений")
       : e.kind === "worker_error"
         ? tr("🔴 Ошибка исполнителя")

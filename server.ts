@@ -1,3 +1,4 @@
+import { agencyIntegration, agencyDeliverySchema, agencyCapabilitySchema, agencyReceiptSchema } from "./agency-integration";
 import { translate } from "./companion/aivech/src/locale";
 import {
   preferencesSchema,
@@ -68,6 +69,10 @@ const statusSchema = z.object({
   tasks: z.number(),
 });
 export const rpcContract = defineRpcContract({
+  agencyCapabilities: {input:z.null(),output:agencyCapabilitySchema},
+  agencyConfigure: {input:z.object({enabled:z.boolean()}).strict(),output:z.object({saved:z.literal(true)})},
+  agencyEnqueue: {input:agencyDeliverySchema,output:agencyReceiptSchema},
+  agencyDeliveryStatus: {input:z.object({deliveryId:z.string().min(1).max(160)}).strict(),output:agencyReceiptSchema},
   preferences: {
     input: z.null(),
     output: preferencesSchema.extend({ tokenPresent: z.boolean() }),
@@ -86,6 +91,7 @@ export const rpcContract = defineRpcContract({
 });
 export default async function plugin(bb: BbPluginApi) {
   const settings = bb.settings.define({
+    agencyEnabled: {type:"boolean",label:"Уведомления из Агентства",default:false},
     language: {
       type: "select",
       label: "Language / Язык",
@@ -408,14 +414,16 @@ export default async function plugin(bb: BbPluginApi) {
       .list<Event>("queue:")
       .filter(
         (x) =>
-          x.value.kind === "test" ||
+          (x.value.kind.startsWith("agency_") ? cfg.agencyEnabled : x.value.kind === "test" ||
           (cfg.notifyTasks &&
-            (x.value.kind !== "worker_error" || cfg.notifyWorkerErrors)),
+            (x.value.kind !== "worker_error" || cfg.notifyWorkerErrors))),
       )
       .slice(0, 15)) {
       if (!projects.some((p) => p.id === e.projectId)) continue;
       const topic = store.get<Topic>("topic:" + e.projectId);
       if (!topic?.threadId) continue;
+      if(e.kind.startsWith("agency_") && e.agencyTopicId!==topic.threadId) continue;
+      // Keep deliveries bound to their original topic.
       // Tasks detail route verified through the live Tasks UI.
       await tg("sendMessage", {
         message_thread_id: topic.threadId,
@@ -435,7 +443,7 @@ export default async function plugin(bb: BbPluginApi) {
                   base.origin +
                   (e.kind === "test"
                     ? "/plugins/telegram-projects/telegram-projects"
-                    : "/plugins/tasks/tasks/task/" + encodeURIComponent(e.key)),
+                    : e.kind.startsWith("agency_") ? "/plugins/agency/overview/jobs/" + encodeURIComponent(e.key) : "/plugins/tasks/tasks/task/" + encodeURIComponent(e.key)),
               },
             ],
           ],
@@ -499,7 +507,12 @@ export default async function plugin(bb: BbPluginApi) {
       });
     return flight;
   }
+  const agency=agencyIntegration(store);
   bb.rpc.register(rpcContract, {
+    agencyCapabilities: async()=>{const c=await settings.get();return agency.capabilities(c.enabled&&c.agencyEnabled);},
+    agencyConfigure: async({enabled})=>{await settings.experimental_set({agencyEnabled:enabled});return {saved:true as const};},
+    agencyEnqueue: async(input)=>{const c=await settings.get();return agency.enqueue(input,c.enabled&&c.agencyEnabled);},
+    agencyDeliveryStatus: ({deliveryId})=>agency.status(deliveryId),
     preferences: async () => {
       const c = await settings.get();
       return {
