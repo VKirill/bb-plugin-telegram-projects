@@ -46,6 +46,17 @@
     "typescript": "^5.7.0",
     "vaul": "^1.1.2"
   },
+  "description": "Chat with BB from Telegram: interactive project topics, session menus, voice input and Tasks notifications bridge.",
+  "keywords": [
+    "bb",
+    "bb-plugin",
+    "telegram",
+    "telegram-bot",
+    "tasks",
+    "voice-input",
+    "remote-control",
+    "developer-tools"
+  ],
   "scripts": {
     "check": "tsc --noEmit",
     "test": "tsx --test test/*.test.ts",
@@ -56,5 +67,9 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/VKirill/bb-plugin-telegram-projects.git"
+  },
+  "homepage": "https://github.com/VKirill/bb-plugin-telegram-projects#readme",
+  "bugs": {
+    "url": "https://github.com/VKirill/bb-plugin-telegram-projects/issues"
   }
 }
