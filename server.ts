@@ -8,12 +8,12 @@ import {
   persistToken,
 } from "./settings";
 import { ChatBridge } from "./chat";
+import { makeChatControlPublisher, writeJsonAtomic } from "./json-file";
+import { mkdir } from "node:fs/promises";
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import {
   watch,
-  writeFileSync,
-  renameSync,
   mkdirSync,
   existsSync,
 } from "node:fs";
@@ -490,8 +490,7 @@ export default async function plugin(bb: BbPluginApi) {
         }))
         .slice(0, 500),
     };
-    writeFileSync(path + ".tmp", JSON.stringify(data), { mode: 0o600 });
-    renameSync(path + ".tmp", path);
+    await writeJsonAtomic(path, data);
   }
   async function sync() {
     if (flight) return flight;
@@ -726,6 +725,7 @@ export default async function plugin(bb: BbPluginApi) {
         "/Users/vechkasov/toolkit/service-bots/private/bb-chat-inbox";
       const control =
         "/Users/vechkasov/toolkit/service-bots/private/telegram-chat.json";
+      const publishControl = makeChatControlPublisher(control);
       let rich = true;
       let currentUrl = "";
       let language: "ru" | "en" = "ru";
@@ -736,7 +736,7 @@ export default async function plugin(bb: BbPluginApi) {
         pendingWake = true;
         resume?.();
       };
-      mkdirSync(spool, { recursive: true, mode: 0o700 });
+      await mkdir(spool, { recursive: true, mode: 0o700 });
       const watcher = watch(spool, (_event, name) => {
         if (name?.toString().endsWith(".json")) wakeChat();
       });
@@ -749,7 +749,7 @@ export default async function plugin(bb: BbPluginApi) {
             currentUrl = new URL(cfg.appUrl).origin;
             language = cfg.language as "ru" | "en";
             if (!bridge) {
-              mkdirSync(spool, { recursive: true, mode: 0o700 });
+              await mkdir(spool, { recursive: true, mode: 0o700 });
               activeAbort = new AbortController();
               const bridgeSignal = AbortSignal.any([
                 signal,
@@ -778,31 +778,13 @@ export default async function plugin(bb: BbPluginApi) {
               });
               bridge.recover();
             }
-            writeFileSync(
-              control + ".tmp",
-              JSON.stringify({
-                enabled: true,
-                language: cfg.language,
-                updatedAt: Date.now(),
-              }),
-              { mode: 0o600 },
-            );
-            renameSync(control + ".tmp", control);
+            await publishControl(true, cfg.language);
             await bridge.tick();
           } else {
             activeAbort?.abort();
             await bridge?.dispose();
             bridge = undefined;
-            if (existsSync(control))
-              writeFileSync(
-                control,
-                JSON.stringify({
-                  enabled: false,
-                  language: cfg.language,
-                  updatedAt: Date.now(),
-                }),
-                { mode: 0o600 },
-              );
+            await publishControl(false, cfg.language);
           }
           await new Promise<void>((resolve) => {
             if (pendingWake) {
