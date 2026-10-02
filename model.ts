@@ -176,7 +176,7 @@ export function ingest(
   });
 }
 export function topicName(p: Project) {
-  return `📂 ${p.name}`.slice(0, 128);
+  return p.name.slice(0, 128);
 }
 export class TelegramFailure extends Error {
   constructor(
