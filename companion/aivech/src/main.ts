@@ -66,7 +66,7 @@ async function main() {
         owner_id: OWNER_ID,
         last_sent_at: lastSent,
         last_error: lastError,
-        polling: !stopping,
+        polling: cfg.polling !== false && !stopping,
       }),
     );
     chmodSync(statusFile, 0o600);
@@ -133,22 +133,27 @@ async function main() {
     outbox.close();
   } else {
     let pollingFinished = false;
-    const polling = bot
-      .start({
-        allowed_updates: ["message", "callback_query"],
-        onStart: () => {
-          receipt();
-          console.log("Service bot polling started");
-        },
-      })
-      .catch(() => {
-        lastError = "polling_failed";
-        stopping = true;
-        process.exitCode = 1;
-      })
-      .finally(() => {
-        pollingFinished = true;
-      });
+    // "polling": false leaves getUpdates to the BB plugin; this service then only delivers SMS.
+    const receive = cfg.polling !== false;
+    if (!receive) console.log("Service bot started in SMS send-only mode");
+    const polling = !receive
+      ? undefined
+      : bot
+          .start({
+            allowed_updates: ["message", "callback_query"],
+            onStart: () => {
+              receipt();
+              console.log("Service bot polling started");
+            },
+          })
+          .catch(() => {
+            lastError = "polling_failed";
+            stopping = true;
+            process.exitCode = 1;
+          })
+          .finally(() => {
+            pollingFinished = true;
+          });
     for (const signal of ["SIGINT", "SIGTERM"] as const)
       process.on(signal, () => {
         stopping = true;

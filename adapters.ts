@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { z } from "zod";
@@ -11,35 +10,33 @@ import {
   type Telegram,
 } from "./model";
 const exec = promisify(execFile);
-export function telegram(configFile: string, signal: AbortSignal): Telegram {
+export type TokenSource = () => Promise<string>;
+export function telegram(
+  token: TokenSource,
+  signal: AbortSignal,
+  timeoutMs = 15_000,
+): Telegram {
   return async <T>(
     method: string,
     body: Record<string, unknown>,
   ): Promise<T> => {
-    let token: string;
-    try {
-      const c = JSON.parse(readFileSync(configFile, "utf8"));
-      if (c.chat_id !== OWNER_ID || !c.enabled || typeof c.token !== "string")
-        throw 0;
-      token = c.token;
-    } catch {
-      throw new Error("bot_configuration_unavailable");
-    }
+    const secret = await token();
     let r: Response;
     try {
-      r = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
+      r = await fetch(`https://api.telegram.org/bot${secret}/${method}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           ...body,
           ...(method === "getMe" ||
+          method === "getUpdates" ||
           method === "setMyCommands" ||
           method === "setMyDescription" ||
           method === "setMyShortDescription"
             ? {}
             : { chat_id: OWNER_ID }),
         }),
-        signal: AbortSignal.any([signal, AbortSignal.timeout(15_000)]),
+        signal: AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]),
       });
     } catch {
       throw new TelegramFailure("telegram_network", 30, true);
@@ -69,6 +66,25 @@ export function telegram(configFile: string, signal: AbortSignal): Telegram {
     }
     return data.result as T;
   };
+}
+// Env Catalog prints the stored value; the trailing newline is not part of it.
+export async function readEnvToken(
+  binary: string,
+  baseUrl: string,
+  name: string,
+  signal: AbortSignal,
+): Promise<string> {
+  try {
+    const env: NodeJS.ProcessEnv = { ...process.env, BB_SERVER_URL: baseUrl };
+    const r = await exec(binary, ["env-catalog", "get", name, "--raw"], {
+      env,
+      timeout: 15_000,
+      signal,
+    });
+    return r.stdout.trim();
+  } catch {
+    return "";
+  }
 }
 export async function checkBot(tg: Telegram) {
   const me = await tg("getMe", {});
@@ -143,17 +159,14 @@ export async function readTasks(
 }
 
 export async function transcribeTelegramVoice(
-  configFile: string,
+  token: TokenSource,
   sdk: import("@get-bb/plugin-sdk").BbPluginApi["sdk"],
   voice: { fileId: string; mime: string; size: number; duration: number },
   signal: AbortSignal,
 ): Promise<string> {
   if (voice.size > 15_000_000 || voice.duration > 600)
     throw Error("voice_too_large");
-  const c = JSON.parse(readFileSync(configFile, "utf8"));
-  if (c.chat_id !== OWNER_ID || !c.enabled || typeof c.token !== "string")
-    throw Error("bot_configuration_unavailable");
-  const file = await telegram(configFile, signal)("getFile", {
+  const file = await telegram(token, signal)("getFile", {
     file_id: voice.fileId,
   });
   if (
@@ -163,7 +176,7 @@ export async function transcribeTelegramVoice(
   )
     throw Error("voice_file_invalid");
   const response = await fetch(
-    `https://api.telegram.org/file/bot${c.token}/${file.file_path}`,
+    `https://api.telegram.org/file/bot${await token()}/${file.file_path}`,
     { signal: AbortSignal.any([signal, AbortSignal.timeout(30000)]) },
   ).catch(() => {
     throw Error("voice_download_failed");

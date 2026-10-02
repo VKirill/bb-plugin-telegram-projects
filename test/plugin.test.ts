@@ -10,7 +10,7 @@ test("disabled install has no external effects; CLI/RPC survive reload", async (
   const prefs = (await harness.behavior.callRpc("preferences", null)) as any;
   assert.equal(prefs.language, "ru");
   assert.ok(!("token" in prefs));
-  const { tokenPresent, ...editable } = prefs;
+  const { tokenPresent, tokenSource, tokenEnv, ...editable } = prefs;
   await harness.behavior.callRpc("savePreferences", {
     ...editable,
     language: "en",

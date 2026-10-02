@@ -1,7 +1,5 @@
-import { readFileSync, writeFileSync, renameSync } from "node:fs";
-import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { BOT_ID, OWNER_ID } from "./model";
+import { BOT_ID } from "./model";
 export const preferencesSchema = z
   .object({
     language: z.enum(["ru", "en"]),
@@ -28,14 +26,6 @@ export const diagnosisSchema = z.object({
   error: z.string().nullable(),
 });
 export type Diagnosis = z.infer<typeof diagnosisSchema>;
-export function savedToken(file: string): string {
-  try {
-    const c = JSON.parse(readFileSync(file, "utf8"));
-    return typeof c.token === "string" ? c.token : "";
-  } catch {
-    return "";
-  }
-}
 export async function diagnose(
   token: string,
   request: typeof fetch = fetch,
@@ -77,15 +67,4 @@ export async function diagnose(
     d.error = "telegram_check_failed";
   }
   return d;
-}
-// Credentials are never returned by RPC. Existing protected configuration is shared with the receiver.
-export function persistToken(file: string, token: string) {
-  const c = JSON.parse(readFileSync(file, "utf8"));
-  if (c.chat_id !== OWNER_ID) throw new Error("unexpected_owner");
-  const tmp = file + "." + randomUUID() + ".tmp";
-  writeFileSync(tmp, JSON.stringify({ ...c, token }), {
-    mode: 0o600,
-    flag: "wx",
-  });
-  renameSync(tmp, file);
 }

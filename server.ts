@@ -3,11 +3,10 @@ import { translate } from "./companion/aivech/src/locale";
 import {
   preferencesSchema,
   diagnosisSchema,
-  savedToken,
   diagnose,
-  persistToken,
 } from "./settings";
 import { ChatBridge } from "./chat";
+import { routeUpdate, writeSpool } from "./ingress";
 import { makeChatControlPublisher, writeJsonAtomic } from "./json-file";
 import { mkdir } from "node:fs/promises";
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
@@ -22,6 +21,7 @@ import {
   transcribeTelegramVoice,
   checkBot,
   runBb,
+  readEnvToken,
   trackersSchema,
   readTasks,
 } from "./adapters";
@@ -58,6 +58,7 @@ const statusSchema = z.object({
   lastSync: z.string().nullable(),
   error: z.string().nullable(),
   queue: z.number(),
+  ingressError: z.string().nullable(),
   topics: z.array(
     z.object({
       key: z.string(),
@@ -75,7 +76,11 @@ export const rpcContract = defineRpcContract({
   agencyDeliveryStatus: {input:z.object({deliveryId:z.string().min(1).max(160)}).strict(),output:agencyReceiptSchema},
   preferences: {
     input: z.null(),
-    output: preferencesSchema.extend({ tokenPresent: z.boolean() }),
+    output: preferencesSchema.extend({
+      tokenPresent: z.boolean(),
+      tokenSource: z.enum(["manual", "env", "none"]),
+      tokenEnv: z.string(),
+    }),
   },
   savePreferences: { input: preferencesSchema, output: z.boolean() },
   checkConnection: {
@@ -86,9 +91,12 @@ export const rpcContract = defineRpcContract({
     input: z.object({ token: z.string().max(200) }),
     output: diagnosisSchema,
   },
+  useEnvToken: { input: z.null(), output: z.boolean() },
+  initTopics: { input: z.null(), output: statusSchema },
   status: { input: z.null(), output: statusSchema },
   sync: { input: z.null(), output: statusSchema },
 });
+const SPOOL = "/Users/vechkasov/toolkit/service-bots/private/bb-chat-inbox";
 export default async function plugin(bb: BbPluginApi) {
   const settings = bb.settings.define({
     agencyEnabled: {type:"boolean",label:"Уведомления из Агентства",default:false},
@@ -113,10 +121,15 @@ export default async function plugin(bb: BbPluginApi) {
       label: "Rich Messages для ответов BB",
       default: true,
     },
-    configFile: {
+    botToken: {
       type: "string",
-      label: "Закрытый файл бота на сервере BB",
-      default: "/Users/vechkasov/toolkit/service-bots/private/aivech.json",
+      label: "Токен бота, заданный вручную",
+      secret: true,
+    },
+    tokenEnv: {
+      type: "string",
+      label: "Имя токена бота в Env Catalog",
+      default: "TG_AIVECH_BOT",
     },
     projectionFile: {
       type: "string",
@@ -190,6 +203,33 @@ export default async function plugin(bb: BbPluginApi) {
   let username = "aivech_bot";
   let lastSync: string | null = null;
   let wake: (() => void) | undefined;
+  let ingressError: string | null = null;
+  let activeTasks: { task: Task; tracker: Tracker }[] = [];
+  let envToken = { name: "", value: "", at: 0 };
+  // A manually saved token wins; otherwise the shared Env Catalog entry, re-read every 5 minutes.
+  async function tokenSource(): Promise<"manual" | "env" | "none"> {
+    const c = await settings.get();
+    if (c.botToken?.trim()) return "manual";
+    if (envToken.name !== c.tokenEnv || Date.now() - envToken.at > 300_000)
+      envToken = {
+        name: c.tokenEnv,
+        value: await readEnvToken(
+          c.cliPath,
+          bb.server.loopbackBaseUrl,
+          c.tokenEnv,
+          lifetime.signal,
+        ),
+        at: Date.now(),
+      };
+    return envToken.value ? "env" : "none";
+  }
+  async function botToken(): Promise<string> {
+    const source = await tokenSource();
+    if (source === "manual") return (await settings.get()).botToken!.trim();
+    if (source === "env") return envToken.value;
+    envToken.at = 0;
+    throw new Error("bot_configuration_unavailable");
+  }
   const safeError = (e: unknown) =>
     e instanceof TelegramFailure
       ? e.code
@@ -209,6 +249,7 @@ export default async function plugin(bb: BbPluginApi) {
       lastSync,
       error: lastError,
       queue: store.list("queue:").length,
+      ingressError,
       topics: store.list<Topic>("topic:").map((x) => ({
         key: x.value.key,
         name: x.value.name,
@@ -224,7 +265,7 @@ export default async function plugin(bb: BbPluginApi) {
     if (!cfg.enabled) return;
     if ((store.get<number>("retryAt") ?? 0) > Date.now()) return;
     if (!store.get("trackingSince")) store.put("trackingSince", Date.now());
-    const tg = telegram(cfg.configFile, lifetime.signal);
+    const tg = telegram(botToken, lifetime.signal);
     const me = await checkBot(tg);
     if (store.get("commandsLanguage") !== cfg.language + ":v2") {
       const labels =
@@ -357,6 +398,17 @@ export default async function plugin(bb: BbPluginApi) {
         }
       } catch (e) {
         taskFailure = safeError(e);
+      }
+    }
+    activeTasks = allTasks;
+    // Topics live only in this database. An empty database must not recreate a full set
+    // next to topics another installation already made: creation waits for explicit consent.
+    if (!store.get("topicsBootstrapped")) {
+      if (store.list("topic:").length) store.put("topicsBootstrapped", true);
+      else {
+        lastError = "topics_not_initialized";
+        await publishProjection(cfg.projectionFile, allTasks);
+        return;
       }
     }
     if (!topicsEnabled) {
@@ -521,7 +573,9 @@ export default async function plugin(bb: BbPluginApi) {
             c[k as keyof typeof c],
           ]),
         ) as z.infer<typeof preferencesSchema>),
-        tokenPresent: Boolean(savedToken(c.configFile)),
+        tokenPresent: (await tokenSource()) !== "none",
+        tokenSource: await tokenSource(),
+        tokenEnv: c.tokenEnv,
       };
     },
     savePreferences: async (value) => {
@@ -530,16 +584,25 @@ export default async function plugin(bb: BbPluginApi) {
     },
     checkConnection: async ({ token }) => {
       const c = await settings.get();
-      return diagnose(token?.trim() || savedToken(c.configFile));
+      return diagnose(token?.trim() || (await botToken().catch(() => "")));
     },
     saveToken: async ({ token }) => {
-      const c = await settings.get();
       const clean = token.trim();
       const result = await diagnose(clean);
       if (result.valid && result.sameBot && !result.error && !result.webhook) {
-        persistToken(c.configFile, clean);
+        await settings.experimental_set({ botToken: clean });
       }
       return result;
+    },
+    useEnvToken: async () => {
+      await settings.experimental_set({ botToken: null });
+      envToken.at = 0;
+      return (await tokenSource()) === "env";
+    },
+    initTopics: async () => {
+      store.put("topicsBootstrapped", true);
+      await sync();
+      return status();
     },
     status: () => status(),
     sync: async () => {
@@ -656,7 +719,16 @@ export default async function plugin(bb: BbPluginApi) {
       }
       if (cmd === "bind") {
         if (flight) return { exitCode: 1, stderr: "sync_busy" };
-        const topic = key ? store.get<Topic>("topic:" + key) : undefined;
+        // An empty database adopts existing topics; the next sync restores their names.
+        const topic: Topic | undefined =
+          key && /^(proj_\w+|sms|navigation)$/.test(key)
+            ? (store.get<Topic>("topic:" + key) ?? {
+                key,
+                name: "",
+                threadId: null,
+                creating: false,
+              })
+            : undefined;
         const threadId = Number(id);
         if (!topic || !Number.isSafeInteger(threadId) || threadId <= 0)
           return { exitCode: 1, stderr: "invalid_binding" };
@@ -666,13 +738,14 @@ export default async function plugin(bb: BbPluginApi) {
             .some((x) => x.value.key !== key && x.value.threadId === threadId)
         )
           return { exitCode: 1, stderr: "topic_already_bound" };
-        const cfg = await settings.get();
-        const tg = telegram(cfg.configFile, lifetime.signal);
+        const tg = telegram(botToken, lifetime.signal);
         await checkBot(tg);
-        await tg("editForumTopic", {
-          message_thread_id: threadId,
-          name: topic.name,
-        });
+        if (topic.name)
+          await tg("editForumTopic", {
+            message_thread_id: threadId,
+            name: topic.name,
+          });
+        store.put("topicsBootstrapped", true);
         store.put("topic:" + key, {
           ...topic,
           threadId,
@@ -721,8 +794,7 @@ export default async function plugin(bb: BbPluginApi) {
   });
   bb.background.service("telegram-chat", {
     async start(signal) {
-      const spool =
-        "/Users/vechkasov/toolkit/service-bots/private/bb-chat-inbox";
+      const spool = SPOOL;
       const control =
         "/Users/vechkasov/toolkit/service-bots/private/telegram-chat.json";
       const publishControl = makeChatControlPublisher(control);
@@ -759,7 +831,7 @@ export default async function plugin(bb: BbPluginApi) {
               bridge = new ChatBridge({
                 store,
                 sdk: bb.sdk,
-                tg: telegram(cfg.configFile, bridgeSignal),
+                tg: telegram(botToken, bridgeSignal),
                 spool,
                 get baseUrl() {
                   return currentUrl;
@@ -769,12 +841,7 @@ export default async function plugin(bb: BbPluginApi) {
                 language: () => language,
                 wake: wakeChat,
                 transcribe: (v) =>
-                  transcribeTelegramVoice(
-                    cfg.configFile,
-                    bb.sdk,
-                    v,
-                    bridgeSignal,
-                  ),
+                  transcribeTelegramVoice(botToken, bb.sdk, v, bridgeSignal),
               });
               bridge.recover();
             }
@@ -808,6 +875,95 @@ export default async function plugin(bb: BbPluginApi) {
       } finally {
         watcher.close();
         await bridge?.dispose();
+      }
+    },
+  });
+  function taskList(topicId: number, language: "ru" | "en") {
+    const tr = (s: string) => translate(language, s);
+    const projectId =
+      store.list<Topic>("topic:").find((x) => x.value.threadId === topicId)
+        ?.value.key ??
+      bridge?.bindings().find((b) => b.topicId === topicId)?.projectId;
+    const project = projectId?.startsWith("proj_")
+      ? store.get<Topic>("topic:" + projectId)
+      : undefined;
+    const names: Record<string, string> = {
+      backlog: tr("в планах"),
+      todo: tr("к выполнению"),
+      in_progress: tr("в работе"),
+      in_review: tr("нужна проверка"),
+    };
+    const list = activeTasks.filter(
+      (x) =>
+        !["done", "canceled"].includes(x.task.status) &&
+        (!project || x.tracker.linkedBbProjectId === project.key),
+    );
+    return (
+      "📋 " +
+      (project?.name ?? tr("Активные задачи")) +
+      "\n\n" +
+      (list.length
+        ? list
+            .slice(0, 12)
+            .map(
+              ({ task, tracker }) =>
+                `${task.key} · ${tracker.name}\n${task.title.slice(0, 140)}\n${names[task.status] ?? task.status}`,
+            )
+            .join("\n\n")
+        : tr("Активных задач нет.")) +
+      (list.length > 12
+        ? tr("\n\nЕщё ") + String(list.length - 12) + tr(" — в BB.")
+        : "")
+    ).slice(0, 3900);
+  }
+  bb.background.service("telegram-ingress", {
+    async start(signal) {
+      const pause = (ms: number) =>
+        new Promise<void>((resolve) => {
+          const timer = setTimeout(done, ms);
+          function done() {
+            clearTimeout(timer);
+            signal.removeEventListener("abort", done);
+            resolve();
+          }
+          signal.addEventListener("abort", done, { once: true });
+        });
+      const tg = telegram(botToken, signal, 40_000);
+      while (!signal.aborted) {
+        const cfg = await settings.get();
+        if (!cfg.enabled) {
+          ingressError = null;
+          await pause(5000);
+          continue;
+        }
+        try {
+          const updates = await tg<any[]>("getUpdates", {
+            offset: store.get<number>("ingress:offset") ?? 0,
+            timeout: 25,
+            allowed_updates: ["message", "callback_query"],
+          });
+          ingressError = null;
+          for (const u of updates) {
+            const route = routeUpdate(u);
+            if (route.kind === "chat" && cfg.chatEnabled)
+              writeSpool(SPOOL, route.input);
+            else if (route.kind === "tasks")
+              await tg("sendMessage", {
+                message_thread_id: route.topicId || undefined,
+                text: taskList(route.topicId, cfg.language as "ru" | "en"),
+              });
+            if (route.kind !== "tasks" && route.callbackId)
+              await tg("answerCallbackQuery", {
+                callback_query_id: route.callbackId,
+              }).catch(() => {});
+            store.put("ingress:offset", u.update_id + 1);
+          }
+        } catch (e) {
+          if (signal.aborted) break;
+          // telegram_409: another process still polls this bot.
+          ingressError = safeError(e);
+          await pause(10_000);
+        }
       }
     },
   });

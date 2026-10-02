@@ -1,0 +1,183 @@
+/*
+ * Telegram Projects in the Pokecut look, the same visual language as the
+ * Pokecut BB theme and Lane Pilot: nested panels (a gray well around a white
+ * card), outlined white secondary buttons, the gradient on primary actions,
+ * soft tinted status pills.
+ *
+ * The --tg-* tokens read the theme's --pk-* tokens and fall back to BB's own
+ * palette, so the plugin stays tidy under any BB theme, light or dark.
+ * Radii: 8px rows, buttons and inputs; 12px inner cards; 14px header strip;
+ * 16px panels.
+ */
+
+[data-bb-plugin="telegram-projects"],
+[data-bb-plugin-root]:not([data-bb-plugin]) {
+  --tg-well: var(--pk-well, color-mix(in oklab, var(--muted) 45%, var(--card)));
+  --tg-card: var(--pk-card, var(--card));
+  --tg-outline: var(--pk-outline, var(--input));
+  --tg-hairline: var(--pk-hairline, var(--border));
+  --tg-drop: var(--pk-drop, 0 1px 2px rgb(0 0 0 / 0.06));
+  --tg-card-drop: var(--pk-card-drop, none);
+  --tg-accent: var(--pk-accent-gradient, linear-gradient(var(--primary), var(--primary)));
+  --tg-accent-edge: var(--pk-accent-edge, none);
+  --tg-success: var(--success, #3fae4a);
+  --tg-success-text: var(--diff-added, #2f8a45);
+  --tg-info: var(--timeline-accent, #3e7be8);
+  --tg-danger-text: var(--destructive-text, var(--destructive));
+}
+
+@layer components {
+  /* Page header strip: a quiet well holding the title. */
+  .tg-strip {
+    padding: 14px 18px;
+    border: 1px solid var(--tg-hairline);
+    border-radius: 14px;
+    background-color: var(--tg-well);
+  }
+
+  /* Nested panel: the well frames a header line and the white body card. */
+  .tg-panel {
+    min-width: 0;
+    margin: 0;
+    padding: 4px;
+    border: 1px solid var(--tg-hairline);
+    border-radius: 16px;
+    background-color: var(--tg-well);
+    box-shadow: var(--tg-card-drop);
+  }
+
+  .tg-panel-head {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 8px 12px;
+    font-weight: 600;
+  }
+
+  .tg-panel-body {
+    min-width: 0;
+    padding: 16px;
+    border: 1px solid var(--tg-hairline);
+    border-radius: 12px;
+    background-color: var(--tg-card);
+    box-shadow: var(--tg-drop);
+  }
+
+  /* Inner card inside a panel body: check results, help text. */
+  .tg-inner {
+    padding: 12px 14px;
+    border: 1px solid var(--tg-hairline);
+    border-radius: 12px;
+    background-color: var(--tg-well);
+  }
+
+  .tg-input {
+    padding: 7px 11px;
+    border: 1px solid var(--tg-outline);
+    border-radius: 8px;
+    background-color: var(--tg-card);
+    box-shadow: var(--tg-drop);
+  }
+
+  .tg-input:focus-visible {
+    outline: 2px solid color-mix(in oklab, var(--ring, var(--primary)) 60%, transparent);
+    outline-offset: 1px;
+  }
+
+  /* Secondary action: white with an outline. */
+  .tg-btn {
+    padding: 7px 14px;
+    border: 1px solid var(--tg-outline);
+    border-radius: 8px;
+    background-color: var(--tg-card);
+    box-shadow: var(--tg-drop);
+    font-weight: 500;
+  }
+
+  .tg-btn:hover:not(:disabled) {
+    background-color: var(--tg-well);
+  }
+
+  .tg-btn:disabled {
+    opacity: 0.5;
+  }
+
+  /* Primary action: the accent gradient. */
+  .tg-accent {
+    border-color: transparent;
+    background-color: var(--primary);
+    background-image: var(--tg-accent);
+    box-shadow: var(--tg-accent-edge);
+    color: #ffffff;
+  }
+
+  .tg-accent:hover:not(:disabled) {
+    background-color: var(--primary);
+    filter: brightness(1.05) saturate(1.05);
+  }
+
+  /* Setting rows separated by hairlines. */
+  .tg-row + .tg-row {
+    border-top: 1px solid var(--tg-hairline);
+  }
+
+  /* Native checkbox drawn as a switch: gradient when on. */
+  .tg-switch {
+    position: relative;
+    flex-shrink: 0;
+    width: 34px;
+    height: 20px;
+    border-radius: 999px;
+    background-color: var(--tg-outline);
+    cursor: pointer;
+    appearance: none;
+    transition: background-color 0.15s;
+  }
+
+  .tg-switch::after {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 16px;
+    height: 16px;
+    border-radius: 999px;
+    background-color: #ffffff;
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.2);
+    content: "";
+    transition: transform 0.15s;
+  }
+
+  .tg-switch:checked {
+    background-color: var(--primary);
+    background-image: var(--tg-accent);
+  }
+
+  .tg-switch:checked::after {
+    transform: translateX(14px);
+  }
+
+  .tg-switch:focus-visible {
+    outline: 2px solid color-mix(in oklab, var(--ring, var(--primary)) 60%, transparent);
+    outline-offset: 2px;
+  }
+
+  /* Status pills: soft tint, coloured text, fully rounded. */
+  .tg-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 10px;
+    border-radius: 999px;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+
+  .tg-pill-success { background-color: color-mix(in oklab, var(--tg-success) 14%, transparent); color: var(--tg-success-text); }
+  .tg-pill-info { background-color: color-mix(in oklab, var(--tg-info) 13%, transparent); color: var(--tg-info); }
+  .tg-pill-danger { background-color: color-mix(in oklab, var(--destructive) 12%, transparent); color: var(--tg-danger-text); }
+  .tg-pill-neutral { background-color: var(--tg-card); box-shadow: inset 0 0 0 1px var(--tg-outline); color: var(--foreground); }
+  .tg-pill-muted { background-color: color-mix(in oklab, var(--foreground) 7%, transparent); color: var(--foreground); }
+}
