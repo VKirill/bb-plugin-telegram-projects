@@ -1,31 +1,50 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import "./app.css";
 import { definePluginApp, useRpc } from "@get-bb/plugin-sdk/app";
 import type { rpcContract } from "./server";
 import type { z } from "zod";
 import type { preferencesSchema, Diagnosis } from "./settings";
+import type { EventKind, Events } from "./events";
 type Preferences = z.infer<typeof preferencesSchema>;
+type Rpc = ReturnType<typeof useRpc<typeof rpcContract>>;
+type T = (ru: string, en: string) => string;
+type EventsData = {
+  events: Events;
+  projects: {
+    id: string;
+    name: string;
+    hidden: boolean;
+    topicId: number | null;
+  }[];
+};
+const TABS = ["overview", "events", "topics", "connection", "general"] as const;
+type Tab = (typeof TABS)[number];
+
+// Frequent work first: status and events; connection and general settings are rarely touched.
 function Panel() {
   const rpc = useRpc<typeof rpcContract>();
   const [form, setForm] = useState<Preferences | null>(null),
     [source, setSource] = useState<"manual" | "env" | "none">("none"),
     [tokenEnv, setTokenEnv] = useState(""),
-    [token, setToken] = useState(""),
-    [check, setCheck] = useState<Diagnosis | null>(null),
     [data, setData] = useState<any>(null),
     [busy, setBusy] = useState(false),
-    [notice, setNotice] = useState("");
+    [notice, setNotice] = useState(""),
+    [tab, setTab] = useState<Tab>(() => {
+      const saved = localStorage.getItem("telegram-projects:tab");
+      return TABS.includes(saved as Tab) ? (saved as Tab) : "overview";
+    });
   const en = form?.language === "en";
-  const t = (ru: string, english: string) => (en ? english : ru);
+  const t: T = (ru, english) => (en ? english : ru);
   async function load() {
     try {
       const [p, s] = await Promise.all([
         rpc.call("preferences", null),
         rpc.call("status", null),
       ]);
-      setForm(p);
-      setSource(p.tokenSource);
-      setTokenEnv(p.tokenEnv);
+      const { tokenPresent: _, tokenSource, tokenEnv: env, ...prefs } = p;
+      setForm(prefs);
+      setSource(tokenSource);
+      setTokenEnv(env);
       setData(s);
     } catch {
       setNotice("Не удалось загрузить настройки / Could not load settings");
@@ -50,492 +69,937 @@ function Panel() {
       setBusy(false);
     }
   }
-  const input = "tg-input";
-  const button = "tg-btn";
-  const primary = "tg-btn tg-accent";
-  const flags: [keyof Preferences, string, string, string, string][] = [
-    [
-      "enabled",
-      "Синхронизация проектов",
-      "Project sync",
-      "Создавать темы проектов и доставлять уведомления.",
-      "Create project topics and deliver notifications.",
-    ],
-    [
-      "chatEnabled",
-      "Общение с BB",
-      "Chat with BB",
-      "Сообщения и голос из подключённой темы поступают в чат BB.",
-      "Text and voice from connected topics go to the BB chat.",
-    ],
-    [
-      "richReplies",
-      "Оформленные ответы",
-      "Rich replies",
-      "Rich Messages с форматированием; обычный текст при несовместимости.",
-      "Rich Messages with formatting; plain text fallback.",
-    ],
-    [
-      "notifyTasks",
-      "События Tasks",
-      "Tasks events",
-      "Новые задачи, статусы, завершение и сроки.",
-      "New tasks, statuses, completion and due dates.",
-    ],
-    [
-      "notifyWorkerErrors",
-      "Ошибки исполнителей Tasks",
-      "Task worker errors",
-      "Ошибки агентов, прикреплённых к задачам.",
-      "Errors from agents attached to tasks.",
-    ],
-    [
-      "soundOnReview",
-      "Звук при проверке и ошибках",
-      "Sound for reviews and errors",
-      "Остальные уведомления приходят без звука.",
-      "Other notifications arrive silently.",
-    ],
-    [
-      "deleteTopics",
-      "Удалять темы удалённых проектов",
-      "Delete topics of deleted projects",
-      "Удаляется и история темы Telegram. Отключи, чтобы сохранять её.",
-      "Also deletes the Telegram topic history. Turn off to preserve it.",
-    ],
-  ];
+  async function savePreferences(next: Preferences) {
+    try {
+      if (new URL(next.appUrl).protocol !== "https:") throw 0;
+    } catch {
+      setNotice(
+        t(
+          "Укажи полный адрес BB с https://",
+          "Enter the full BB URL starting with https://",
+        ),
+      );
+      return;
+    }
+    await rpc.call("savePreferences", next);
+    setForm(next);
+    setNotice(t("Настройки сохранены.", "Settings saved."));
+  }
+  const choose = (next: Tab) => {
+    setTab(next);
+    localStorage.setItem("telegram-projects:tab", next);
+  };
+  const labels: Record<Tab, string> = {
+    overview: t("Обзор", "Overview"),
+    events: t("События", "Events"),
+    topics: t("Темы", "Topics"),
+    connection: t("Подключение", "Connection"),
+    general: t("Общие", "General"),
+  };
   return (
     <div
       className="h-full min-h-0 w-full overflow-y-auto"
       style={{ height: "100%", minHeight: 0, overflowY: "auto" }}
     >
       <main className="max-w-4xl mx-auto p-6 pb-12 space-y-4">
-        <header className="tg-strip">
-          <h1 className="text-2xl font-semibold">Telegram · BB</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            {t(
-              "Подключение бота, чаты проектов и уведомления.",
-              "Bot connection, project chats and notifications.",
-            )}
-          </p>
+        <header className="tg-strip flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-semibold">Telegram · BB</h1>
+            <p className="text-sm text-muted-foreground mt-1">
+              {t(
+                "Темы проектов, отчёты агентов, задачи и чат с BB.",
+                "Project topics, agent reports, tasks and chat with BB.",
+              )}
+            </p>
+          </div>
+          {data && (
+            <span
+              className={
+                "tg-pill " +
+                (data.enabled && !data.ingressError && source !== "none"
+                  ? "tg-pill-success"
+                  : "tg-pill-danger")
+              }
+            >
+              @{data.bot} ·{" "}
+              {!data.enabled
+                ? t("выключен", "off")
+                : source === "none"
+                  ? t("нет токена", "no token")
+                  : data.ingressError
+                    ? t("нет приёма", "not receiving")
+                    : t("на связи", "online")}
+            </span>
+          )}
         </header>
+        <nav className="tg-seg" role="tablist">
+          {TABS.map((k) => (
+            <button
+              key={k}
+              role="tab"
+              aria-selected={tab === k}
+              className="tg-seg-item"
+              onClick={() => choose(k)}
+            >
+              {labels[k]}
+            </button>
+          ))}
+        </nav>
         {notice && (
           <p role="status" className="tg-pill tg-pill-info">
             {notice}
           </p>
         )}
         {!form ? (
-          <button className={button} onClick={() => void load()}>
+          <button className="tg-btn" onClick={() => void load()}>
             Повторить / Retry
           </button>
+        ) : tab === "overview" ? (
+          <Overview
+            t={t}
+            data={data}
+            busy={busy}
+            sync={() =>
+              action(async () => setData(await rpc.call("sync", null)))
+            }
+            init={() =>
+              action(async () => setData(await rpc.call("initTopics", null)))
+            }
+          />
+        ) : tab === "events" ? (
+          <EventsTab t={t} rpc={rpc} action={action} busy={busy} />
+        ) : tab === "topics" ? (
+          <TopicsTab
+            t={t}
+            rpc={rpc}
+            form={form}
+            setForm={setForm}
+            data={data}
+            busy={busy}
+            save={() => action(() => savePreferences(form))}
+          />
+        ) : tab === "connection" ? (
+          <ConnectionTab
+            t={t}
+            rpc={rpc}
+            form={form}
+            setForm={setForm}
+            data={data}
+            source={source}
+            setSource={setSource}
+            tokenEnv={tokenEnv}
+            busy={busy}
+            action={action}
+            setNotice={setNotice}
+            save={() => action(() => savePreferences(form))}
+          />
         ) : (
-          <>
-            <fieldset disabled={busy} className="tg-panel">
-              <div className="tg-panel-head">
-                {t("Подключение", "Connection")}
-                <span
-                  className={
-                    "tg-pill " +
-                    (source !== "none" ? "tg-pill-success" : "tg-pill-danger")
-                  }
-                >
-                  {source === "manual"
-                    ? t("токен задан вручную", "manual token")
-                    : source === "env"
-                      ? "Env Catalog · " + tokenEnv
-                      : t("токен не настроен", "token not configured")}
-                </span>
-              </div>
-              <div className="tg-panel-body space-y-4">
-                <p>
-                  {t("Личный бот", "Personal bot")}: @
-                  {data?.bot ?? "aivech_bot"}
-                </p>
-                <label className="block font-medium">
-                  Bot token{" "}
-                  <input
-                    className={input + " block w-full mt-2"}
-                    type="password"
-                    autoComplete="new-password"
-                    value={token}
-                    placeholder={t(
-                      "Вставь токен из BotFather для проверки или замены",
-                      "Paste a BotFather token to check or replace",
-                    )}
-                    onChange={(e) => {
-                      setToken(e.target.value);
-                      setCheck(null);
-                    }}
-                  />
-                </label>
-                <p className="text-sm text-muted-foreground">
-                  {t(
-                    "Токен хранится на сервере и не возвращается в интерфейс. Замена доступна для текущего бота; другой бот требует отдельного переноса привязок.",
-                    "The token stays on the server and is never returned to this page. Replacement supports the current bot; another bot requires a separate binding migration.",
-                  )}
-                </p>
-                <div className="flex flex-wrap gap-3">
-                  <button
-                    className={button}
-                    onClick={() =>
-                      void action(async () =>
-                        setCheck(
-                          await rpc.call("checkConnection", {
-                            ...(token.trim() ? { token: token.trim() } : {}),
-                          }),
-                        ),
-                      )
-                    }
-                  >
-                    {t("Проверить подключение", "Check connection")}
-                  </button>
-                  <button
-                    className={primary}
-                    disabled={!token.trim()}
-                    onClick={() =>
-                      void action(async () => {
-                        const d = await rpc.call("saveToken", {
-                          token: token.trim(),
-                        });
-                        setCheck(d);
-                        if (d.valid && d.sameBot && !d.error && !d.webhook) {
-                          setToken("");
-                          setSource("manual");
-                          setNotice(
-                            t(
-                              "Токен сохранён. Приёмник переподключится автоматически.",
-                              "Token saved. The receiver reconnects automatically.",
-                            ),
-                          );
-                        } else
-                          setNotice(
-                            t(
-                              "Токен не сохранён. Исправь ошибки ниже.",
-                              "Token not saved. Resolve the issues below.",
-                            ),
-                          );
-                      })
-                    }
-                  >
-                    {t("Проверить и сохранить токен", "Check and save token")}
-                  </button>
-                  {source === "manual" && (
-                    <button
-                      className={button}
-                      onClick={() =>
-                        void action(async () => {
-                          const env = await rpc.call("useEnvToken", null);
-                          setSource(env ? "env" : "none");
-                        })
-                      }
-                    >
-                      {t(
-                        "Брать токен из Env Catalog",
-                        "Use the Env Catalog token",
-                      )}
-                    </button>
-                  )}
-                </div>
-                {check && (
-                  <div className="tg-inner space-y-2" aria-live="polite">
-                    <p>
-                      {check.valid ? "✅" : "❌"} {t("Токен", "Token")}
-                      {check.username ? " · @" + check.username : ""}
-                    </p>
-                    {check.valid && (
-                      <>
-                        <p>
-                          {check.sameBot ? "✅" : "❌"}{" "}
-                          {t(
-                            "Совпадает с подключённым ботом",
-                            "Matches the connected bot",
-                          )}
-                        </p>
-                        <p>
-                          {check.topics ? "✅" : "❌"} Threaded Mode —{" "}
-                          {check.topics
-                            ? t("включён", "enabled")
-                            : t(
-                                "включи в BotFather → Bot Settings → Threads Settings",
-                                "enable in BotFather → Bot Settings → Threads Settings",
-                              )}
-                        </p>
-                        <p>
-                          {check.userTopics ? "✅" : "⚠️"}{" "}
-                          {t(
-                            "Создание тем пользователем",
-                            "User-created topics",
-                          )}{" "}
-                          —{" "}
-                          {!check.userTopics
-                            ? t(
-                                "отключи Disallow users to create new threads, чтобы создавать темы вручную",
-                                "turn off Disallow users to create new threads to create topics manually",
-                              )
-                            : t("разрешено", "allowed")}
-                        </p>
-                        <p>
-                          {check.error ? "⚠️" : check.webhook ? "❌" : "✅"}{" "}
-                          {check.error
-                            ? t(
-                                "Webhook: проверка не завершена",
-                                "Webhook: check incomplete",
-                              )
-                            : check.webhook
-                              ? t(
-                                  "Установлен webhook. Приёмник использует polling: сначала отключи webhook в прежней интеграции.",
-                                  "A webhook is configured. This receiver uses polling: disable the webhook in the previous integration first.",
-                                )
-                              : t(
-                                  "Webhook не мешает приёму сообщений",
-                                  "No webhook conflicts with message polling",
-                                )}
-                        </p>
-                      </>
-                    )}
-                    {check.error && (
-                      <p>
-                        {t(
-                          "Проверка не завершена: проверь токен и доступ сервера к Telegram.",
-                          "Check incomplete: verify the token and server access to Telegram.",
-                        )}
-                      </p>
-                    )}
-                  </div>
-                )}
-                <details className="tg-inner">
-                  <summary className="cursor-pointer font-medium">
-                    {t(
-                      "Что включить в BotFather",
-                      "What to enable in BotFather",
-                    )}
-                  </summary>
-                  <div className="mt-3 space-y-2 text-sm">
-                    <p>
-                      <b>Threaded Mode: ON.</b>{" "}
-                      {t(
-                        "Обязательно для тем проектов.",
-                        "Required for project topics.",
-                      )}
-                    </p>
-                    <p>
-                      <b>Disallow users to create new threads: OFF.</b>{" "}
-                      {t(
-                        "Для новых тем вручную и команды /project.",
-                        "For manually created topics and /project.",
-                      )}
-                    </p>
-                    <p>
-                      <b>Restrict bot usage.</b>{" "}
-                      {t(
-                        "Можно включить для личного доступа. API не раскрывает эту настройку; проверь вручную.",
-                        "Optional for personal access. The API does not expose this setting; check it manually.",
-                      )}
-                    </p>
-                    <p>
-                      {t(
-                        "Bot Management, Bot-to-Bot, Guest, Guard, Secretary и права групп не нужны для личных чатов с BB. Для общения агентов внутри BB режим Bot-to-Bot не требуется.",
-                        "Bot Management, Bot-to-Bot, Guest, Guard, Secretary and group permissions are unnecessary for private BB chats. Agents communicating inside BB do not require Bot-to-Bot mode.",
-                      )}
-                    </p>
-                    <p>
-                      {t(
-                        "Открой личный чат с ботом и нажми Start.",
-                        "Open the bot’s private chat and press Start.",
-                      )}
-                    </p>
-                    <a
-                      className="underline"
-                      href="https://core.telegram.org/bots/api#user"
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      Telegram Bot API ↗
-                    </a>
-                  </div>
-                </details>
-              </div>
-            </fieldset>
-            <fieldset disabled={busy} className="tg-panel">
-              <div className="tg-panel-head">
-                {t("Поведение и язык", "Behavior and language")}
-              </div>
-              <div className="tg-panel-body space-y-4">
-                <label className="flex items-center justify-between gap-3 font-medium">
-                  {t("Язык интерфейса и бота", "Interface and bot language")}
-                  <select
-                    className={input}
-                    value={form.language}
-                    onChange={(e) =>
-                      setForm({
-                        ...form,
-                        language: e.target.value as "ru" | "en",
-                      })
-                    }
-                  >
-                    <option value="ru">Русский</option>
-                    <option value="en">English</option>
-                  </select>
-                </label>
-                <p className="text-sm text-muted-foreground">
-                  {t(
-                    "Язык новых меню и служебных сообщений. Существующая история и ответы агентов не переводятся.",
-                    "Language of new menus and service messages. Existing history and agent replies are not translated.",
-                  )}
-                </p>
-                <div>
-                  {flags.map(([key, ru, eng, hru, hen]) => (
-                    <label
-                      key={key}
-                      className="tg-row flex gap-3 items-center justify-between py-3"
-                    >
-                      <span>
-                        <span className="block font-medium">{t(ru, eng)}</span>
-                        <span className="text-sm text-muted-foreground">
-                          {t(hru, hen)}
-                        </span>
-                      </span>
-                      <input
-                        className="tg-switch"
-                        type="checkbox"
-                        checked={Boolean(form[key])}
-                        onChange={(e) =>
-                          setForm({ ...form, [key]: e.target.checked })
-                        }
-                      />
-                    </label>
-                  ))}
-                </div>
-                <label className="block font-medium">
-                  {t("Публичный адрес BB", "Public BB URL")}
-                  <input
-                    type="url"
-                    className={input + " block w-full mt-2"}
-                    value={form.appUrl}
-                    onChange={(e) =>
-                      setForm({ ...form, appUrl: e.target.value })
-                    }
-                  />
-                </label>
-                <button
-                  className={primary}
-                  onClick={() =>
-                    void action(async () => {
-                      const {
-                        tokenPresent: _,
-                        tokenSource: _s,
-                        tokenEnv: _e,
-                        ...prefs
-                      } = form as Preferences & {
-                        tokenPresent?: boolean;
-                        tokenSource?: string;
-                        tokenEnv?: string;
-                      };
-                      try {
-                        if (new URL(prefs.appUrl).protocol !== "https:")
-                          throw 0;
-                      } catch {
-                        setNotice(
-                          t(
-                            "Укажи полный адрес BB с https://",
-                            "Enter the full BB URL starting with https://",
-                          ),
-                        );
-                        return;
-                      }
-                      await rpc.call("savePreferences", prefs);
-                      setNotice(
-                        t(
-                          "Настройки сохранены. Новые сообщения используют выбранный язык.",
-                          "Settings saved. New messages use the selected language.",
-                        ),
-                      );
-                    })
-                  }
-                >
-                  {t("Сохранить настройки", "Save settings")}
-                </button>
-              </div>
-            </fieldset>
-            <section className="tg-panel">
-              <div className="tg-panel-head">
-                <h2>{t("Состояние", "Status")}</h2>
-                <button
-                  className={button}
-                  disabled={busy}
-                  onClick={() =>
-                    void action(async () =>
-                      setData(await rpc.call("sync", null)),
-                    )
-                  }
-                >
-                  {t("Синхронизировать", "Sync now")}
-                </button>
-              </div>
-              {data && (
-                <div className="tg-panel-body space-y-3">
-                  <div className="flex flex-wrap gap-2">
-                    <span className="tg-pill tg-pill-neutral">
-                      {t("Темы", "Topics")}: {data.topics.length}
-                    </span>
-                    <span className="tg-pill tg-pill-neutral">
-                      {t("Очередь", "Queue")}: {data.queue + data.chatQueue}
-                    </span>
-                    <span className="tg-pill tg-pill-neutral">
-                      Tasks: {data.tasks}
-                    </span>
-                  </div>
-                  {(data.error || data.chatError || data.ingressError) && (
-                    <p role="alert" className="tg-pill tg-pill-danger">
-                      {data.error || data.chatError || data.ingressError}
-                    </p>
-                  )}
-                  {data.error === "topics_not_initialized" && (
-                    <div className="tg-inner space-y-2">
-                      <p className="text-sm">
-                        {t(
-                          "База плагина пустая. Если темы бота уже есть, привяжи их командой bb telegram-projects bind, иначе создай набор тем.",
-                          "The plugin database is empty. If the bot already has topics, bind them with bb telegram-projects bind; otherwise create the topic set.",
-                        )}
-                      </p>
-                      <button
-                        className={primary}
-                        disabled={busy}
-                        onClick={() =>
-                          void action(async () =>
-                            setData(await rpc.call("initTopics", null)),
-                          )
-                        }
-                      >
-                        {t("Создать темы", "Create topics")}
-                      </button>
-                    </div>
-                  )}
-                  <p className="text-sm text-muted-foreground">
-                    /project · /chats · /new · /model · /section · /stop · /menu
-                  </p>
-                  <ul className="flex flex-wrap gap-2">
-                    {data.topics.map((v: any) => (
-                      <li
-                        key={v.key}
-                        className={
-                          "tg-pill " +
-                          (v.threadId ? "tg-pill-success" : "tg-pill-muted")
-                        }
-                      >
-                        {v.threadId ? "✅" : "⏳"} {v.name}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </section>
-          </>
+          <GeneralTab
+            t={t}
+            form={form}
+            setForm={setForm}
+            busy={busy}
+            save={() => action(() => savePreferences(form))}
+          />
         )}
       </main>
     </div>
   );
 }
+
+function Section(props: {
+  title: ReactNode;
+  aside?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <section className="tg-panel">
+      <div className="tg-panel-head">
+        <h2>{props.title}</h2>
+        {props.aside}
+      </div>
+      <div className="tg-panel-body space-y-4">{props.children}</div>
+    </section>
+  );
+}
+function Toggle(props: {
+  title: string;
+  hint?: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  children?: ReactNode;
+}) {
+  return (
+    <label className="tg-row flex gap-3 items-center justify-between py-3">
+      <span className="min-w-0">
+        <span className="block font-medium">{props.title}</span>
+        {props.hint && (
+          <span className="text-sm text-muted-foreground">{props.hint}</span>
+        )}
+        {props.children}
+      </span>
+      <input
+        className="tg-switch"
+        type="checkbox"
+        checked={props.checked}
+        onChange={(e) => props.onChange(e.target.checked)}
+      />
+    </label>
+  );
+}
+
+function problem(code: string, t: T) {
+  const known: Record<string, string> = {
+    tasks_cli_unavailable: t(
+      "Плагин Tasks выключен или недоступен: события задач не приходят. Отчёты агентов работают.",
+      "The Tasks plugin is disabled or unavailable: task events are not delivered. Agent reports still work.",
+    ),
+    topics_not_initialized: t(
+      "База плагина пустая, темы не созданы.",
+      "The plugin database is empty; no topics yet.",
+    ),
+    bot_configuration_unavailable: t(
+      "Нет токена бота: сохрани его на вкладке «Подключение» или добавь в Env Catalog.",
+      "No bot token: save one on the Connection tab or add it to Env Catalog.",
+    ),
+    threaded_mode_disabled: t(
+      "У бота выключен Threaded Mode в BotFather.",
+      "Threaded Mode is off for the bot in BotFather.",
+    ),
+    telegram_409: t(
+      "Сообщения бота читает другой процесс. Останови второй приёмник.",
+      "Another process reads the bot's updates. Stop the second receiver.",
+    ),
+  };
+  return known[code] ?? code;
+}
+
+function Overview(props: {
+  t: T;
+  data: any;
+  busy: boolean;
+  sync: () => void;
+  init: () => void;
+}) {
+  const { t, data } = props;
+  if (!data) return null;
+  const problems = [data.error, data.chatError, data.ingressError].filter(
+    Boolean,
+  ) as string[];
+  const stats: [string, string][] = [
+    [
+      t("Синхронизация", "Last sync"),
+      data.lastSync
+        ? new Date(data.lastSync).toLocaleTimeString(undefined, {
+            hour: "2-digit",
+            minute: "2-digit",
+            second: "2-digit",
+          })
+        : "—",
+    ],
+    [t("Темы", "Topics"), String(data.topics.length)],
+    [t("Очередь", "Queue"), String(data.queue + data.chatQueue)],
+    [t("Задачи", "Tasks"), String(data.tasks)],
+  ];
+  return (
+    <>
+      <Section
+        title={t("Состояние", "Status")}
+        aside={
+          <button
+            className="tg-btn tg-accent"
+            disabled={props.busy}
+            onClick={props.sync}
+          >
+            {t("Синхронизировать", "Sync now")}
+          </button>
+        }
+      >
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {stats.map(([label, value]) => (
+            <div key={label} className="tg-inner">
+              <div className="text-xs text-muted-foreground">{label}</div>
+              <div className="text-lg font-semibold">{value}</div>
+            </div>
+          ))}
+        </div>
+        {problems.length ? (
+          <ul className="space-y-2">
+            {problems.map((p) => (
+              <li key={p} role="alert" className="tg-inner text-sm">
+                <span className="tg-pill tg-pill-danger mr-2">!</span>
+                {problem(p, t)}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="tg-pill tg-pill-success">
+            {t("Всё работает", "Everything works")}
+          </p>
+        )}
+        {data.error === "topics_not_initialized" && (
+          <div className="tg-inner space-y-2">
+            <p className="text-sm">
+              {t(
+                "Если темы бота уже есть, привяжи их командой bb telegram-projects bind <project-id> <topic-id>, иначе создай набор тем.",
+                "If the bot already has topics, bind them with bb telegram-projects bind <project-id> <topic-id>; otherwise create the topic set.",
+              )}
+            </p>
+            <button
+              className="tg-btn tg-accent"
+              disabled={props.busy}
+              onClick={props.init}
+            >
+              {t("Создать темы", "Create topics")}
+            </button>
+          </div>
+        )}
+      </Section>
+      <Section title={t("Команды бота", "Bot commands")}>
+        <p className="text-sm text-muted-foreground">
+          /project · /chats · /new · /model · /section · /stop · /menu · /tasks
+        </p>
+      </Section>
+    </>
+  );
+}
+
+const GROUPS: {
+  ru: string;
+  en: string;
+  kinds: [EventKind, string, string, string, string][];
+}[] = [
+  {
+    ru: "Агенты",
+    en: "Agents",
+    kinds: [
+      [
+        "thread_done",
+        "Агент закончил работу",
+        "Agent finished",
+        "Итог хода с подписью: проект, раздел, тред, агент.",
+        "Turn result signed with project, section, thread and agent.",
+      ],
+      [
+        "thread_attention",
+        "Агент ждёт ответа",
+        "Agent is waiting",
+        "Вопрос или разрешение, без которого работа стоит.",
+        "A question or approval that blocks the work.",
+      ],
+      [
+        "thread_stopped",
+        "Тред остановлен или упал",
+        "Thread stopped or failed",
+        "Остановка вручную или ошибка провайдера.",
+        "Manual stop or a provider error.",
+      ],
+    ],
+  },
+  {
+    ru: "Задачи",
+    en: "Tasks",
+    kinds: [
+      [
+        "task_done",
+        "Задача завершена",
+        "Task done",
+        "Всё, что перешло в «Завершено».",
+        "Everything moved to Done.",
+      ],
+      [
+        "task_review",
+        "Нужна проверка",
+        "Needs review",
+        "Исполнитель сдал работу на проверку.",
+        "A worker handed the task in for review.",
+      ],
+      ["task_created", "Новая задача", "New task", "", ""],
+      ["task_started", "Исполнитель начал работу", "Worker started", "", ""],
+      [
+        "task_status",
+        "Другие смены статуса",
+        "Other status changes",
+        "В работе, отменена и так далее.",
+        "In progress, canceled and so on.",
+      ],
+      ["task_due", "Изменён срок", "Due date changed", "", ""],
+      [
+        "worker_error",
+        "Ошибка исполнителя",
+        "Worker error",
+        "Агент, прикреплённый к задаче, упал.",
+        "An agent attached to a task failed.",
+      ],
+    ],
+  },
+];
+
+function EventsTab(props: {
+  t: T;
+  rpc: Rpc;
+  action: (fn: () => Promise<void>) => Promise<void>;
+  busy: boolean;
+}) {
+  const { t, rpc } = props;
+  const [state, setState] = useState<EventsData | null>(null);
+  const [dirty, setDirty] = useState(false);
+  useEffect(() => {
+    void rpc.call("eventsGet", null).then((d) => setState(d as EventsData));
+  }, []);
+  if (!state) return null;
+  const set = (k: EventKind, patch: Partial<Events[EventKind]>) => {
+    setState({
+      ...state,
+      events: { ...state.events, [k]: { ...state.events[k], ...patch } },
+    });
+    setDirty(true);
+  };
+  return (
+    <>
+      {GROUPS.map((g) => (
+        <Section key={g.ru} title={t(g.ru, g.en)}>
+          <div>
+            {g.kinds.map(([k, ru, eng, hru, hen]) => {
+              const r = state.events[k];
+              return (
+                <Toggle
+                  key={k}
+                  title={t(ru, eng)}
+                  hint={hru ? t(hru, hen) : undefined}
+                  checked={r.on}
+                  onChange={(on) => set(k, { on })}
+                >
+                  {r.on && (
+                    <span className="flex flex-wrap gap-2 mt-2">
+                      <button
+                        type="button"
+                        className={
+                          "tg-pill " +
+                          (r.sound ? "tg-pill-info" : "tg-pill-muted")
+                        }
+                        onClick={(e) => {
+                          e.preventDefault();
+                          set(k, { sound: !r.sound });
+                        }}
+                      >
+                        {r.sound
+                          ? t("🔔 со звуком", "🔔 with sound")
+                          : t("🔕 без звука", "🔕 silent")}
+                      </button>
+                      <ProjectPicker
+                        t={t}
+                        projects={state.projects}
+                        value={r.projects}
+                        onChange={(projects) => set(k, { projects })}
+                      />
+                    </span>
+                  )}
+                </Toggle>
+              );
+            })}
+          </div>
+        </Section>
+      ))}
+      <div className="flex justify-end">
+        <button
+          className="tg-btn tg-accent"
+          disabled={props.busy || !dirty}
+          onClick={() =>
+            void props.action(async () => {
+              await rpc.call("eventsSave", state.events);
+              setDirty(false);
+            })
+          }
+        >
+          {t("Сохранить события", "Save events")}
+        </button>
+      </div>
+    </>
+  );
+}
+
+function ProjectPicker(props: {
+  t: T;
+  projects: EventsData["projects"];
+  value: string[] | null;
+  onChange: (v: string[] | null) => void;
+}) {
+  const { t, value } = props;
+  const label = !value
+    ? t("все проекты", "all projects")
+    : value.length === 0
+      ? t("ни одного проекта", "no projects")
+      : props.projects
+          .filter((p) => value.includes(p.id))
+          .map((p) => p.name)
+          .join(", ");
+  return (
+    <details className="tg-picker" onClick={(e) => e.stopPropagation()}>
+      <summary className="tg-pill tg-pill-neutral cursor-pointer">
+        📂 {label}
+      </summary>
+      <div className="tg-inner mt-2 space-y-1">
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={!value}
+            onChange={(e) => props.onChange(e.target.checked ? null : [])}
+          />
+          {t("Все проекты", "All projects")}
+        </label>
+        {props.projects.map((p) => (
+          <label key={p.id} className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              disabled={!value}
+              checked={!value || value.includes(p.id)}
+              onChange={(e) =>
+                props.onChange(
+                  e.target.checked
+                    ? [...(value ?? []), p.id]
+                    : (value ?? []).filter((x) => x !== p.id),
+                )
+              }
+            />
+            {p.name}
+            {p.hidden && (
+              <span className="tg-pill tg-pill-muted">
+                {t("скрыт", "hidden")}
+              </span>
+            )}
+          </label>
+        ))}
+      </div>
+    </details>
+  );
+}
+
+function TopicsTab(props: {
+  t: T;
+  rpc: Rpc;
+  form: Preferences;
+  setForm: (f: Preferences) => void;
+  data: any;
+  busy: boolean;
+  save: () => void;
+}) {
+  const { t, form, data } = props;
+  const [projects, setProjects] = useState<EventsData["projects"]>([]);
+  useEffect(() => {
+    void props.rpc
+      .call("eventsGet", null)
+      .then((d) => setProjects((d as EventsData).projects));
+  }, []);
+  const bindings: { topicId: number; projectId: string }[] =
+    data?.chatBindings ?? [];
+  const service = (data?.topics ?? []).filter(
+    (x: any) => !x.key.startsWith("proj_"),
+  );
+  return (
+    <>
+      <Section title={t("Темы проектов", "Project topics")}>
+        <ul className="space-y-2">
+          {service.map((x: any) => (
+            <li
+              key={x.key}
+              className="tg-inner flex items-center justify-between gap-2"
+            >
+              <span>{x.name}</span>
+              <span className="tg-pill tg-pill-neutral">
+                #{x.threadId ?? "—"}
+              </span>
+            </li>
+          ))}
+          {projects.map((p) => {
+            const extra = bindings.filter(
+              (b) => b.projectId === p.id && b.topicId !== p.topicId,
+            ).length;
+            return (
+              <li
+                key={p.id}
+                className="tg-inner flex flex-wrap items-center justify-between gap-2"
+              >
+                <span className="font-medium">📂 {p.name}</span>
+                <span className="flex flex-wrap gap-2">
+                  {extra > 0 && (
+                    <span className="tg-pill tg-pill-info">
+                      +{extra} {t("доп. тем", "extra topics")}
+                    </span>
+                  )}
+                  {p.hidden && form.hideWithFolders ? (
+                    <span className="tg-pill tg-pill-muted">
+                      {t(
+                        "скрыт в Project Folders",
+                        "hidden in Project Folders",
+                      )}
+                    </span>
+                  ) : p.topicId ? (
+                    <span className="tg-pill tg-pill-success">
+                      #{p.topicId}
+                    </span>
+                  ) : (
+                    <span className="tg-pill tg-pill-muted">
+                      {t("темы нет", "no topic")}
+                    </span>
+                  )}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      </Section>
+      <Section title={t("Правила тем", "Topic rules")}>
+        <div>
+          <Toggle
+            title={t(
+              "Скрывать вместе с Project Folders",
+              "Hide with Project Folders",
+            )}
+            hint={t(
+              "Скрытый проект или раздел убирает свою тему из Telegram вместе с историей: в личном чате с ботом тему можно только удалить. Показал снова — тема создаётся заново.",
+              "A hidden project or section removes its topic from Telegram with its history: a private bot chat can only delete topics. Show it again and a new topic is created.",
+            )}
+            checked={form.hideWithFolders}
+            onChange={(v) => props.setForm({ ...form, hideWithFolders: v })}
+          />
+          <Toggle
+            title={t(
+              "Удалять темы удалённых проектов",
+              "Delete topics of deleted projects",
+            )}
+            hint={t(
+              "Удаляется и история темы Telegram. Отключи, чтобы сохранять её.",
+              "Also deletes the Telegram topic history. Turn off to preserve it.",
+            )}
+            checked={form.deleteTopics}
+            onChange={(v) => props.setForm({ ...form, deleteTopics: v })}
+          />
+        </div>
+        <button
+          className="tg-btn tg-accent"
+          disabled={props.busy}
+          onClick={props.save}
+        >
+          {t("Сохранить", "Save")}
+        </button>
+      </Section>
+    </>
+  );
+}
+
+function ConnectionTab(props: {
+  t: T;
+  rpc: Rpc;
+  form: Preferences;
+  setForm: (f: Preferences) => void;
+  data: any;
+  source: "manual" | "env" | "none";
+  setSource: (s: "manual" | "env" | "none") => void;
+  tokenEnv: string;
+  busy: boolean;
+  action: (fn: () => Promise<void>) => Promise<void>;
+  setNotice: (s: string) => void;
+  save: () => void;
+}) {
+  const { t, rpc, form, source } = props;
+  const [token, setToken] = useState("");
+  const [check, setCheck] = useState<Diagnosis | null>(null);
+  return (
+    <>
+      <Section
+        title={t("Бот", "Bot")}
+        aside={
+          <span
+            className={
+              "tg-pill " +
+              (source !== "none" ? "tg-pill-success" : "tg-pill-danger")
+            }
+          >
+            {source === "manual"
+              ? t("токен задан вручную", "manual token")
+              : source === "env"
+                ? "Env Catalog · " + props.tokenEnv
+                : t("токен не настроен", "token not configured")}
+          </span>
+        }
+      >
+        <p>
+          {t("Личный бот", "Personal bot")}: @{props.data?.bot ?? "aivech_bot"}
+        </p>
+        <label className="block font-medium">
+          {t("Заменить токен", "Replace token")}
+          <input
+            className="tg-input block w-full mt-2"
+            type="password"
+            autoComplete="new-password"
+            value={token}
+            placeholder={t(
+              "Вставь токен из BotFather для проверки или замены",
+              "Paste a BotFather token to check or replace",
+            )}
+            onChange={(e) => {
+              setToken(e.target.value);
+              setCheck(null);
+            }}
+          />
+        </label>
+        <p className="text-sm text-muted-foreground">
+          {t(
+            "Без ручного токена плагин берёт его из Env Catalog. Ручной токен хранится в секретах плагина и не возвращается в интерфейс.",
+            "Without a manual token the plugin reads Env Catalog. A manual token is kept in plugin secrets and never returned to this page.",
+          )}
+        </p>
+        <div className="flex flex-wrap gap-3">
+          <button
+            className="tg-btn"
+            disabled={props.busy}
+            onClick={() =>
+              void props.action(async () =>
+                setCheck(
+                  await rpc.call("checkConnection", {
+                    ...(token.trim() ? { token: token.trim() } : {}),
+                  }),
+                ),
+              )
+            }
+          >
+            {t("Проверить подключение", "Check connection")}
+          </button>
+          <button
+            className="tg-btn tg-accent"
+            disabled={props.busy || !token.trim()}
+            onClick={() =>
+              void props.action(async () => {
+                const d = await rpc.call("saveToken", { token: token.trim() });
+                setCheck(d);
+                if (d.valid && d.sameBot && !d.error && !d.webhook) {
+                  setToken("");
+                  props.setSource("manual");
+                  props.setNotice(t("Токен сохранён.", "Token saved."));
+                } else
+                  props.setNotice(
+                    t(
+                      "Токен не сохранён. Исправь ошибки ниже.",
+                      "Token not saved. Resolve the issues below.",
+                    ),
+                  );
+              })
+            }
+          >
+            {t("Проверить и сохранить токен", "Check and save token")}
+          </button>
+          {source === "manual" && (
+            <button
+              className="tg-btn"
+              disabled={props.busy}
+              onClick={() =>
+                void props.action(async () =>
+                  props.setSource(
+                    (await rpc.call("useEnvToken", null)) ? "env" : "none",
+                  ),
+                )
+              }
+            >
+              {t("Брать токен из Env Catalog", "Use the Env Catalog token")}
+            </button>
+          )}
+        </div>
+        {check && <Check t={t} check={check} />}
+        <details className="tg-inner">
+          <summary className="cursor-pointer font-medium">
+            {t("Что включить в BotFather", "What to enable in BotFather")}
+          </summary>
+          <div className="mt-3 space-y-2 text-sm">
+            <p>
+              <b>Threaded Mode: ON.</b>{" "}
+              {t(
+                "Обязательно для тем проектов.",
+                "Required for project topics.",
+              )}
+            </p>
+            <p>
+              <b>Disallow users to create new threads: OFF.</b>{" "}
+              {t(
+                "Для новых тем вручную и команды /project.",
+                "For manually created topics and /project.",
+              )}
+            </p>
+            <p>
+              <b>Restrict bot usage.</b>{" "}
+              {t(
+                "Можно включить для личного доступа. API не раскрывает эту настройку; проверь вручную.",
+                "Optional for personal access. The API does not expose this setting; check it manually.",
+              )}
+            </p>
+            <p>
+              {t(
+                "Открой личный чат с ботом и нажми Start.",
+                "Open the bot’s private chat and press Start.",
+              )}
+            </p>
+            <a
+              className="underline"
+              href="https://core.telegram.org/bots/api#user"
+              target="_blank"
+              rel="noreferrer"
+            >
+              Telegram Bot API ↗
+            </a>
+          </div>
+        </details>
+      </Section>
+      <Section title={t("Ссылки в сообщениях", "Links in messages")}>
+        <label className="block font-medium">
+          {t("Публичный адрес BB", "Public BB URL")}
+          <input
+            type="url"
+            className="tg-input block w-full mt-2"
+            value={form.appUrl}
+            onChange={(e) => props.setForm({ ...form, appUrl: e.target.value })}
+          />
+        </label>
+        <button
+          className="tg-btn tg-accent"
+          disabled={props.busy}
+          onClick={props.save}
+        >
+          {t("Сохранить", "Save")}
+        </button>
+      </Section>
+    </>
+  );
+}
+
+function Check({ t, check }: { t: T; check: Diagnosis }) {
+  return (
+    <div className="tg-inner space-y-2" aria-live="polite">
+      <p>
+        {check.valid ? "✅" : "❌"} {t("Токен", "Token")}
+        {check.username ? " · @" + check.username : ""}
+      </p>
+      {check.valid && (
+        <>
+          <p>
+            {check.sameBot ? "✅" : "❌"}{" "}
+            {t("Совпадает с подключённым ботом", "Matches the connected bot")}
+          </p>
+          <p>
+            {check.topics ? "✅" : "❌"} Threaded Mode —{" "}
+            {check.topics
+              ? t("включён", "enabled")
+              : t(
+                  "включи в BotFather → Bot Settings → Threads Settings",
+                  "enable in BotFather → Bot Settings → Threads Settings",
+                )}
+          </p>
+          <p>
+            {check.userTopics ? "✅" : "⚠️"}{" "}
+            {t("Создание тем пользователем", "User-created topics")} —{" "}
+            {!check.userTopics
+              ? t(
+                  "отключи Disallow users to create new threads, чтобы создавать темы вручную",
+                  "turn off Disallow users to create new threads to create topics manually",
+                )
+              : t("разрешено", "allowed")}
+          </p>
+          <p>
+            {check.error ? "⚠️" : check.webhook ? "❌" : "✅"}{" "}
+            {check.error
+              ? t("Webhook: проверка не завершена", "Webhook: check incomplete")
+              : check.webhook
+                ? t(
+                    "Установлен webhook. Приёмник использует polling: сначала отключи webhook в прежней интеграции.",
+                    "A webhook is configured. This receiver uses polling: disable the webhook in the previous integration first.",
+                  )
+                : t(
+                    "Webhook не мешает приёму сообщений",
+                    "No webhook conflicts with message polling",
+                  )}
+          </p>
+        </>
+      )}
+      {check.error && (
+        <p>
+          {t(
+            "Проверка не завершена: проверь токен и доступ сервера к Telegram.",
+            "Check incomplete: verify the token and server access to Telegram.",
+          )}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function GeneralTab(props: {
+  t: T;
+  form: Preferences;
+  setForm: (f: Preferences) => void;
+  busy: boolean;
+  save: () => void;
+}) {
+  const { t, form, setForm } = props;
+  return (
+    <Section title={t("Общие", "General")}>
+      <label className="flex items-center justify-between gap-3 font-medium">
+        {t("Язык интерфейса и бота", "Interface and bot language")}
+        <select
+          className="tg-input"
+          value={form.language}
+          onChange={(e) =>
+            setForm({ ...form, language: e.target.value as "ru" | "en" })
+          }
+        >
+          <option value="ru">Русский</option>
+          <option value="en">English</option>
+        </select>
+      </label>
+      <p className="text-sm text-muted-foreground">
+        {t(
+          "Язык новых меню и служебных сообщений. Существующая история и ответы агентов не переводятся.",
+          "Language of new menus and service messages. Existing history and agent replies are not translated.",
+        )}
+      </p>
+      <div>
+        <Toggle
+          title={t("Синхронизация проектов", "Project sync")}
+          hint={t(
+            "Главный выключатель: темы, события и приём сообщений.",
+            "Main switch: topics, events and message receiving.",
+          )}
+          checked={form.enabled}
+          onChange={(v) => setForm({ ...form, enabled: v })}
+        />
+        <Toggle
+          title={t("Общение с BB", "Chat with BB")}
+          hint={t(
+            "Сообщения и голос из подключённой темы поступают в чат BB.",
+            "Text and voice from connected topics go to the BB chat.",
+          )}
+          checked={form.chatEnabled}
+          onChange={(v) => setForm({ ...form, chatEnabled: v })}
+        />
+        <Toggle
+          title={t("Оформленные ответы", "Rich replies")}
+          hint={t(
+            "Rich Messages с форматированием; обычный текст при несовместимости.",
+            "Rich Messages with formatting; plain text fallback.",
+          )}
+          checked={form.richReplies}
+          onChange={(v) => setForm({ ...form, richReplies: v })}
+        />
+      </div>
+      <button
+        className="tg-btn tg-accent"
+        disabled={props.busy}
+        onClick={props.save}
+      >
+        {t("Сохранить", "Save")}
+      </button>
+    </Section>
+  );
+}
+
 export default definePluginApp((app) => {
   app.slots.navPanel({
     id: "telegram-projects",

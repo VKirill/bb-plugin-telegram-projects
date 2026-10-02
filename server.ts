@@ -7,6 +7,17 @@ import {
 } from "./settings";
 import { ChatBridge } from "./chat";
 import { routeUpdate, writeSpool } from "./ingress";
+import {
+  classifyThread,
+  eventKind,
+  eventsSchema,
+  formatThreadCard,
+  readEvents,
+  route,
+  sectionFor,
+  taskKindsOn,
+  type Events,
+} from "./events";
 import { makeChatControlPublisher, writeJsonAtomic } from "./json-file";
 import { mkdir } from "node:fs/promises";
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
@@ -92,6 +103,21 @@ export const rpcContract = defineRpcContract({
     output: diagnosisSchema,
   },
   useEnvToken: { input: z.null(), output: z.boolean() },
+  eventsGet: {
+    input: z.null(),
+    output: z.object({
+      events: eventsSchema,
+      projects: z.array(
+        z.object({
+          id: z.string(),
+          name: z.string(),
+          hidden: z.boolean(),
+          topicId: z.number().nullable(),
+        }),
+      ),
+    }),
+  },
+  eventsSave: { input: eventsSchema, output: z.boolean() },
   initTopics: { input: z.null(), output: statusSchema },
   status: { input: z.null(), output: statusSchema },
   sync: { input: z.null(), output: statusSchema },
@@ -146,6 +172,11 @@ export default async function plugin(bb: BbPluginApi) {
       type: "string",
       label: "Публичный адрес BB",
       default: bb.server.experimental_appUrl || "https://vechkasov.getbb.app",
+    },
+    hideWithFolders: {
+      type: "boolean",
+      label: "Скрывать темы проектов, скрытых в Project Folders",
+      default: true,
     },
     deleteTopics: {
       type: "boolean",
@@ -223,6 +254,53 @@ export default async function plugin(bb: BbPluginApi) {
       };
     return envToken.value ? "env" : "none";
   }
+  async function events(): Promise<Events> {
+    const saved = store.get("events:config");
+    if (saved) return readEvents(saved);
+    const seeded = readEvents(null, await settings.get());
+    store.put("events:config", seeded);
+    return seeded;
+  }
+  const folderSchema = z.object({
+    id: z.string(),
+    projectId: z.string(),
+    name: z.string(),
+    path: z.string(),
+  });
+  type Folder = z.infer<typeof folderSchema>;
+  // Project Folders is optional. A failed read keeps the last known state, never "nothing hidden".
+  async function folderState(): Promise<{ hidden: string[]; folders: Folder[] }> {
+    try {
+      const [prefs, list] = await Promise.all([
+        bb.sdk.plugins.callRpc({
+          pluginId: "project-folders",
+          method: "prefs_get",
+          input: null,
+          outputSchema: z.object({
+            items: z.record(z.string(), z.object({ hidden: z.boolean().optional() }).passthrough()),
+          }).passthrough(),
+        }),
+        bb.sdk.plugins.callRpc({
+          pluginId: "project-folders",
+          method: "list",
+          input: null,
+          outputSchema: z.object({ folders: z.array(folderSchema.passthrough()) }).passthrough(),
+        }),
+      ]);
+      const state = {
+        hidden: Object.entries(prefs.items)
+          .filter(([, v]) => v.hidden)
+          .map(([k]) => k),
+        folders: list.folders.map(({ id, projectId, name, path }) => ({ id, projectId, name, path })),
+      };
+      store.put("folders:state", state);
+      return state;
+    } catch {
+      return store.get("folders:state") ?? { hidden: [], folders: [] };
+    }
+  }
+  // thread:changed accumulates here; the sync loop turns finished turns into topic reports.
+  const pendingThreads = new Map<string, Set<string>>();
   async function botToken(): Promise<string> {
     const source = await tokenSource();
     if (source === "manual") return (await settings.get()).botToken!.trim();
@@ -336,7 +414,11 @@ export default async function plugin(bb: BbPluginApi) {
       runBb(cfg.cliPath, bb.server.loopbackBaseUrl, args, lifetime.signal);
     let taskFailure: string | null = null;
     const allTasks: { task: Task; tracker: Tracker }[] = [];
-    if (cfg.notifyTasks) {
+    const ev = await events();
+    const folders = await folderState();
+    const hidden = new Set(cfg.hideWithFolders ? folders.hidden : []);
+    const visible = projects.filter((p) => !hidden.has("p:" + p.id));
+    if (taskKindsOn(ev)) {
       try {
         const trackers = trackersSchema.parse(
           await cli(["tasks", "project", "list", "--json"]),
@@ -350,7 +432,7 @@ export default async function plugin(bb: BbPluginApi) {
           const tasks = await readTasks(cli, tracker.id);
           ingest(store, tracker, tasks);
           allTasks.push(...tasks.map((task) => ({ task, tracker })));
-          if (cfg.notifyWorkerErrors) {
+          if (ev.worker_error.on) {
             for (const task of tasks.filter(
               (t) => !["done", "canceled"].includes(t.status),
             )) {
@@ -418,7 +500,29 @@ export default async function plugin(bb: BbPluginApi) {
     }
     await ensureTopic(store, tg, "navigation", tr("🧭 Навигация"));
     await ensureTopic(store, tg, "sms", "📱 SMS");
-    await reconcileProjects(store, tg, projects, cfg.deleteTopics);
+    // Telegram cannot hide a topic in a private chat: hiding removes it; showing creates a new one.
+    for (const b of store.list<{ topicId: number; projectId: string; folderId?: string }>("chat:binding:").map((x) => x.value)) {
+      const main = store.get<Topic>("topic:" + b.projectId)?.threadId === b.topicId;
+      if (main || !(hidden.has("p:" + b.projectId) || (b.folderId && hidden.has("f:" + b.folderId)))) continue;
+      await tg("deleteForumTopic", { message_thread_id: b.topicId }).catch((e) => {
+        if (!(e instanceof TelegramFailure && e.code === "topic_missing")) throw e;
+      });
+      if (bridge) bridge.forget(b.topicId);
+      else store.del("chat:binding:" + b.topicId);
+    }
+    for (const p of projects.filter((p) => hidden.has("p:" + p.id))) {
+      const topic = store.get<Topic>("topic:" + p.id);
+      if (!topic || topic.creating) continue;
+      if (topic.threadId)
+        await tg("deleteForumTopic", { message_thread_id: topic.threadId }).catch((e) => {
+          if (!(e instanceof TelegramFailure && e.code === "topic_missing")) throw e;
+        });
+      bridge?.forget(topic.threadId ?? -1);
+      store.del("chat:binding:" + topic.threadId);
+      store.del("topic:" + p.id);
+    }
+    await reconcileProjects(store, tg, visible, cfg.deleteTopics);
+    await collectThreadEvents(ev, visible, folders.folders, hidden);
     const base = new URL(cfg.appUrl);
     if (base.protocol !== "https:")
       throw new Error("public_https_url_required");
@@ -427,7 +531,7 @@ export default async function plugin(bb: BbPluginApi) {
       let text =
         topic.key === "navigation"
           ? tr("<b>🧭 Рабочее пространство Кирилла</b>\n\n") +
-            projects.map((p) => "📂 " + escapeHtml(p.name)).join("\n") +
+            visible.map((p) => "📂 " + escapeHtml(p.name)).join("\n") +
             tr(
               "\n\nВ темах проектов — чаты BB и уведомления Tasks.\n📱 SMS — коды и сообщения на телефон.\n\n/project — привязать новую тему\n/chats — чаты BB\n/model — агент и модель\n/tasks — активные задачи\n/menu — управление",
             )
@@ -438,7 +542,7 @@ export default async function plugin(bb: BbPluginApi) {
             : "<b>" +
               String(escapeHtml(topic.name)) +
               tr(
-                "</b>\n\nЗдесь появляются события задач этого проекта.\n\n/menu — управление чатом BB\n/new — новая сессия\n/chats — подключиться к существующему чату\n/model — агент и модель\n/tasks — задачи проекта\n\nВ Telegram приходят только ответы подключённого чата и события Tasks.",
+                "</b>\n\nЗдесь появляются события задач и отчёты агентов этого проекта: кто закончил работу, кто ждёт ответа, что остановилось.\n\n/menu — управление чатом BB\n/new — новая сессия\n/chats — подключиться к существующему чату\n/model — агент и модель\n/tasks — задачи проекта\n\nКакие события присылать, настраивается на странице плагина, вкладка «События».",
               );
       if (topic.introText === text) continue;
       const payload = {
@@ -462,45 +566,64 @@ export default async function plugin(bb: BbPluginApi) {
       topic.introText = text;
       store.put("topic:" + topic.key, topic);
     }
-    for (const { key, value: e } of store
-      .list<Event>("queue:")
-      .filter(
-        (x) =>
-          (x.value.kind.startsWith("agency_") ? cfg.agencyEnabled : x.value.kind === "test" ||
-          (cfg.notifyTasks &&
-            (x.value.kind !== "worker_error" || cfg.notifyWorkerErrors))),
-      )
-      .slice(0, 15)) {
-      if (!projects.some((p) => p.id === e.projectId)) continue;
+    let sent = 0;
+    for (const { key, value: e } of store.list<Event>("queue:")) {
+      if (sent >= 15) break;
+      const agency = e.kind.startsWith("agency_");
+      const kind = eventKind(e);
+      const decision =
+        e.kind === "test"
+          ? { send: true, sound: false }
+          : agency
+            ? { send: cfg.agencyEnabled, sound: e.urgent }
+            : kind
+              ? route(ev, kind, e.projectId)
+              : { send: false, sound: false };
+      // Switched-off events and hidden or removed projects are dropped, not kept in the queue.
+      if (!decision.send || !visible.some((p) => p.id === e.projectId)) {
+        if (!agency || !cfg.agencyEnabled) store.del(key);
+        continue;
+      }
       const topic = store.get<Topic>("topic:" + e.projectId);
       if (!topic?.threadId) continue;
-      if(e.kind.startsWith("agency_") && e.agencyTopicId!==topic.threadId) continue;
+      if (agency && e.agencyTopicId !== topic.threadId) continue;
       // Keep deliveries bound to their original topic.
       // Tasks detail route verified through the live Tasks UI.
       await tg("sendMessage", {
         message_thread_id: topic.threadId,
-        text: formatEvent(e, cfg.language as "ru" | "en"),
+        text: e.thread
+          ? formatThreadCard(e.thread, cfg.language as "ru" | "en")
+          : formatEvent(e, cfg.language as "ru" | "en"),
         parse_mode: "HTML",
-        disable_notification: !(cfg.soundOnReview && e.urgent),
+        disable_notification: !decision.sound,
         link_preview_options: { is_disabled: true },
         reply_markup: {
           inline_keyboard: [
             [
               {
-                text:
-                  e.kind === "test"
+                text: e.thread
+                  ? tr("Открыть тред")
+                  : e.kind === "test"
                     ? tr("Открыть Telegram Projects")
                     : tr("Открыть ") + String(e.key) + "",
                 url:
                   base.origin +
-                  (e.kind === "test"
-                    ? "/plugins/telegram-projects/telegram-projects"
-                    : e.kind.startsWith("agency_") ? "/plugins/agency/overview/jobs/" + encodeURIComponent(e.key) : "/plugins/tasks/tasks/task/" + encodeURIComponent(e.key)),
+                  (e.thread
+                    ? "/projects/" +
+                      encodeURIComponent(e.projectId) +
+                      "/threads/" +
+                      encodeURIComponent(e.thread.threadId)
+                    : e.kind === "test"
+                      ? "/plugins/telegram-projects/telegram-projects"
+                      : agency
+                        ? "/plugins/agency/overview/jobs/" + encodeURIComponent(e.key)
+                        : "/plugins/tasks/tasks/task/" + encodeURIComponent(e.key)),
               },
             ],
           ],
         },
       });
+      sent++;
       store.atomic(() => {
         store.put("sent:" + e.id, Date.now());
         store.del(key);
@@ -512,6 +635,106 @@ export default async function plugin(bb: BbPluginApi) {
     lastSync = new Date().toISOString();
     lastError = taskFailure;
     await publishProjection(cfg.projectionFile, allTasks);
+  }
+  async function collectThreadEvents(
+    ev: Events,
+    visible: { id: string; name: string }[],
+    folders: Folder[],
+    hidden: Set<string>,
+  ) {
+    const batch = [...pendingThreads];
+    pendingThreads.clear();
+    const bound = new Set(
+      store
+        .list<{ threadId: string | null }>("chat:binding:")
+        .map((x) => x.value.threadId),
+    );
+    for (const [threadId, types] of batch) {
+      try {
+        const t = await bb.sdk.threads.get({ threadId, signal: lifetime.signal });
+        const project = visible.find((p) => p.id === t.projectId);
+        // Sub-agents, chats already mirrored into Telegram and closed threads stay quiet.
+        if (
+          !project ||
+          t.parentThreadId ||
+          bound.has(threadId) ||
+          t.deletedAt ||
+          t.archivedAt ||
+          t.visibility === "hidden"
+        )
+          continue;
+        const pending = await bb.sdk.threads.interactions
+          .list({ threadId, signal: lifetime.signal })
+          .then((list) => list.filter((i: any) => i.status === "pending" || !i.status))
+          .catch(() => []);
+        const previous = store.get<string>("thread:status:" + threadId);
+        store.put("thread:status:" + threadId, t.status);
+        const outcome = classifyThread(
+          [...types],
+          t.status,
+          pending.length,
+          previous,
+        );
+        if (!outcome) {
+          // turn/completed can arrive while the status still reads active: look again next pass.
+          if (["active", "starting", "stopping", "pending"].includes(t.status))
+            pendingThreads.set(threadId, new Set([...types, ...(pendingThreads.get(threadId) ?? [])]));
+          continue;
+        }
+        const kind = ("thread_" + outcome) as "thread_done";
+        if (!route(ev, kind, project.id).send) continue;
+        const env = t.environmentId
+          ? await bb.sdk.environments
+              .get({ environmentId: t.environmentId })
+              .catch(() => null)
+          : null;
+        const section = sectionFor(
+          folders.filter((f) => f.projectId === project.id),
+          (env as { path?: string } | null)?.path,
+        );
+        if (section && hidden.has("f:" + section.id)) continue;
+        const stamp =
+          outcome === "attention"
+            ? pending.map((i: any) => i.id).join(",")
+            : String(t.updatedAt);
+        const id = `thread:${threadId}:${outcome}:${stamp}`;
+        if (store.get("sent:" + id)) continue;
+        const reply =
+          outcome === "attention"
+            ? null
+            : await bb.sdk.threads
+                .output({ threadId, signal: lifetime.signal })
+                .then((r) => r.output ?? null)
+                .catch(() => null);
+        const event: Event = {
+          id,
+          projectId: project.id,
+          taskId: "",
+          key: threadId,
+          title: t.title || t.titleFallback || threadId,
+          tracker: "",
+          status: t.status,
+          kind,
+          dueDate: null,
+          at: new Date().toISOString(),
+          urgent: outcome !== "done",
+          thread: {
+            threadId,
+            outcome,
+            status: t.status,
+            project: project.name,
+            section: section?.name ?? null,
+            title: t.title || t.titleFallback || threadId,
+            agent: t.providerId,
+            reply,
+            at: Date.now(),
+          },
+        };
+        store.put("queue:" + id, event);
+      } catch {
+        // A thread that cannot be read now is retried with its next change.
+      }
+    }
   }
   async function publishProjection(
     path: string,
@@ -593,6 +816,29 @@ export default async function plugin(bb: BbPluginApi) {
         await settings.experimental_set({ botToken: clean });
       }
       return result;
+    },
+    eventsGet: async () => {
+      const [ev, list, folders] = await Promise.all([
+        events(),
+        bb.sdk.projects.list({ signal: lifetime.signal }),
+        folderState(),
+      ]);
+      return {
+        events: ev,
+        projects: list
+          .filter((p) => p.kind === "standard")
+          .map((p) => ({
+            id: p.id,
+            name: p.name,
+            hidden: folders.hidden.includes("p:" + p.id),
+            topicId: store.get<Topic>("topic:" + p.id)?.threadId ?? null,
+          })),
+      };
+    },
+    eventsSave: async (value) => {
+      store.put("events:config", value);
+      wake?.();
+      return true;
     },
     useEnvToken: async () => {
       await settings.experimental_set({ botToken: null });
@@ -771,6 +1017,25 @@ export default async function plugin(bb: BbPluginApi) {
         event: "project:changed",
         callback: () => wake?.(),
       });
+      const relevant = [
+        "turn/completed",
+        "system/thread/interrupted",
+        "system/interaction/lifecycle",
+        "system/userQuestion/lifecycle",
+      ];
+      const unsubscribeThreads = bb.sdk.subscribe({
+        event: "thread:changed",
+        callback: (e) => {
+          const types = e.metadata?.eventTypes ?? [];
+          const status = e.changes?.includes("status-changed");
+          if (!e.id || (!status && !types.some((x) => relevant.includes(x))))
+            return;
+          const set = pendingThreads.get(e.id) ?? new Set<string>();
+          for (const x of types) set.add(x);
+          pendingThreads.set(e.id, set);
+          wake?.();
+        },
+      });
       try {
         while (!signal.aborted) {
           await sync();
@@ -789,6 +1054,7 @@ export default async function plugin(bb: BbPluginApi) {
         }
       } finally {
         unsubscribe();
+        unsubscribeThreads();
       }
     },
   });

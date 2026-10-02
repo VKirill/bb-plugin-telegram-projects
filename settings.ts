@@ -7,9 +7,7 @@ export const preferencesSchema = z
     chatEnabled: z.boolean(),
     richReplies: z.boolean(),
     deleteTopics: z.boolean(),
-    notifyTasks: z.boolean(),
-    notifyWorkerErrors: z.boolean(),
-    soundOnReview: z.boolean(),
+    hideWithFolders: z.boolean(),
     appUrl: z
       .string()
       .url()

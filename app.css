@@ -118,6 +118,46 @@
     filter: brightness(1.05) saturate(1.05);
   }
 
+  /* Tabs: a segmented track, the chosen tab raised in white. */
+  .tg-seg {
+    display: flex;
+    max-width: 100%;
+    overflow-x: auto;
+    gap: 2px;
+    padding: 3px;
+    border: 1px solid var(--tg-hairline);
+    border-radius: 9px;
+    background-color: var(--tg-well);
+  }
+
+  .tg-seg-item {
+    flex: 1 0 auto;
+    padding: 6px 12px;
+    border-radius: 6px;
+    color: var(--muted-foreground);
+    font-weight: 500;
+    white-space: nowrap;
+  }
+
+  .tg-seg-item:hover {
+    color: var(--foreground);
+  }
+
+  .tg-seg-item[aria-selected="true"] {
+    background-color: var(--tg-card);
+    box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.12);
+    color: var(--foreground);
+    font-weight: 600;
+  }
+
+  .tg-picker > summary {
+    list-style: none;
+  }
+
+  .tg-picker > summary::-webkit-details-marker {
+    display: none;
+  }
+
   /* Setting rows separated by hairlines. */
   .tg-row + .tg-row {
     border-top: 1px solid var(--tg-hairline);

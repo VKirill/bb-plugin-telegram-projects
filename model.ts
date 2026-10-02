@@ -38,6 +38,8 @@ export type Topic = {
 };
 export type Event = {
   agencyTopicId?: number;
+  /** BB thread reports (kind thread_*): who did what and where. */
+  thread?: import("./events").ThreadCard & { threadId: string };
   id: string;
   projectId: string;
   taskId: string;
