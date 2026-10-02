@@ -76,3 +76,37 @@ test("the deepest folder containing the working directory is the section", () =>
   assert.equal(sectionFor(folders, "/p/other")?.id, "a");
   assert.equal(sectionFor(folders, "/q"), undefined);
 });
+test("agent Markdown becomes Telegram HTML: bold, code, tables, lists, links", async () => {
+  const { markdownExcerpt } = await import("../events");
+  const html = markdownExcerpt(
+    "## Итог\nОн сам (`orchestrator`) и **writer**.\n\n| День | Всего |\n|---|---|\n| 27.09 | 25 |\n\n- пункт <x>\n[док](https://e.x/a?b=1&c=2)\nsnake_case_name",
+  );
+  assert.equal(
+    html,
+    '<b>Итог</b>\nОн сам (<code>orchestrator</code>) и <b>writer</b>.\n\n<b>День · Всего</b>\n27.09 · 25\n\n• пункт &lt;x&gt;\n<a href="https://e.x/a?b=1&amp;c=2">док</a>\nsnake_case_name',
+  );
+  const long = markdownExcerpt("строка **жирная**\n".repeat(60), 100);
+  assert.ok(long.endsWith("…"));
+  assert.equal((long.match(/<b>/g) ?? []).length, (long.match(/<\/b>/g) ?? []).length);
+});
+test("rich card keeps the agent Markdown, escapes metadata and closes a cut code fence", async () => {
+  const { formatThreadRich } = await import("../events");
+  const md = formatThreadRich(
+    {
+      outcome: "done",
+      status: "idle",
+      project: "Клиенты",
+      section: null,
+      title: "Fix *bold* | table",
+      agent: "codex",
+      reply: "| a | b |\n|---|---|\n| 1 | 2 |\n\n```\n" + "x\n".repeat(2000),
+      at: Date.UTC(2026, 9, 2, 12, 0),
+    },
+    "ru",
+  );
+  assert.match(md, /^\*\*✅ Агент закончил работу\*\*/);
+  assert.match(md, /🧵 \*\*Fix \\\*bold\\\* \\\| table\*\*/);
+  assert.match(md, /<details><summary>Ответ агента<\/summary>\n\n\| a \| b \|/);
+  assert.equal((md.match(/^\s*```/gm) ?? []).length % 2, 0);
+  assert.ok(md.endsWith("</details>"));
+});

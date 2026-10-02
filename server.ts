@@ -13,6 +13,7 @@ import {
   eventKind,
   eventsSchema,
   formatThreadCard,
+  formatThreadRich,
   readEvents,
   route,
   sectionFor,
@@ -559,12 +560,8 @@ export default async function plugin(bb: BbPluginApi) {
       if (agency && e.agencyTopicId !== topic.threadId) continue;
       // Keep deliveries bound to their original topic.
       // Tasks detail route verified through the live Tasks UI.
-      await tg("sendMessage", {
+      const common = {
         message_thread_id: topic.threadId,
-        text: e.thread
-          ? formatThreadCard(e.thread, cfg.language as "ru" | "en")
-          : formatEvent(e, cfg.language as "ru" | "en"),
-        parse_mode: "HTML",
         disable_notification: !decision.sound,
         link_preview_options: { is_disabled: true },
         reply_markup: {
@@ -592,7 +589,27 @@ export default async function plugin(bb: BbPluginApi) {
             ],
           ],
         },
-      });
+      };
+      const html = {
+        ...common,
+        text: e.thread
+          ? formatThreadCard(e.thread, cfg.language as "ru" | "en")
+          : formatEvent(e, cfg.language as "ru" | "en"),
+        parse_mode: "HTML",
+      };
+      // Agent reports go out as native Rich Messages; HTML stays as the fallback.
+      if (e.thread && cfg.richReplies)
+        await tg("sendRichMessage", {
+          ...common,
+          rich_message: {
+            markdown: formatThreadRich(e.thread, cfg.language as "ru" | "en"),
+          },
+        }).catch((err) => {
+          if (err instanceof TelegramFailure && err.code === "telegram_400")
+            return tg("sendMessage", html);
+          throw err;
+        });
+      else await tg("sendMessage", html);
       sent++;
       store.atomic(() => {
         store.put("sent:" + e.id, Date.now());

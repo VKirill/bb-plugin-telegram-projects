@@ -128,49 +128,83 @@ const agents: Record<string, string> = {
   opencode: "OpenCode",
   gemini: "Gemini",
 };
-export function formatThreadCard(c: ThreadCard, language: "ru" | "en") {
+function cardParts(c: ThreadCard, language: "ru" | "en") {
   const t = (ru: string, en: string) => (language === "en" ? en : ru);
-  const heading =
-    c.outcome === "done"
-      ? t("✅ Агент закончил работу", "✅ Agent finished")
-      : c.outcome === "attention"
-        ? t("✋ Агент ждёт ответа", "✋ Agent is waiting for you")
-        : c.status === "error"
-          ? t(
-              "🔴 Тред остановился с ошибкой",
-              "🔴 Thread stopped with an error",
-            )
-          : t("⏹ Тред остановлен", "⏹ Thread stopped");
-  const place = [c.project, c.section].filter(Boolean).join(" › ");
+  return {
+    t,
+    heading:
+      c.outcome === "done"
+        ? t("✅ Агент закончил работу", "✅ Agent finished")
+        : c.outcome === "attention"
+          ? t("✋ Агент ждёт ответа", "✋ Agent is waiting for you")
+          : c.status === "error"
+            ? t(
+                "🔴 Тред остановился с ошибкой",
+                "🔴 Thread stopped with an error",
+              )
+            : t("⏹ Тред остановлен", "⏹ Thread stopped"),
+    place: [c.project, c.section].filter(Boolean).join(" › "),
+    title: c.title.slice(0, 200),
+    agent: agents[c.agent] ?? c.agent,
+    when: new Date(c.at).toLocaleString(language === "en" ? "en-GB" : "ru-RU", {
+      timeZone: "Europe/Madrid",
+      hour: "2-digit",
+      minute: "2-digit",
+      day: "2-digit",
+      month: "2-digit",
+    }),
+  };
+}
+// HTML fallback for clients or chats where Rich Messages are refused.
+export function formatThreadCard(c: ThreadCard, language: "ru" | "en") {
+  const p = cardParts(c, language);
   const reply = c.reply?.trim()
     ? "\n\n<blockquote expandable>" +
-      escapeHtml(
-        c.reply.trim().length > 700
-          ? c.reply.trim().slice(0, 700) + "…"
-          : c.reply.trim(),
-      ) +
+      markdownExcerpt(c.reply) +
       "</blockquote>"
     : "";
   return (
     "<b>" +
-    heading +
+    p.heading +
     "</b>\n📂 " +
-    escapeHtml(place) +
+    escapeHtml(p.place) +
     "\n🧵 <b>" +
-    escapeHtml(c.title.slice(0, 200)) +
+    escapeHtml(p.title) +
     "</b>\n🤖 " +
-    escapeHtml(agents[c.agent] ?? c.agent) +
+    escapeHtml(p.agent) +
     " · " +
-    escapeHtml(
-      new Date(c.at).toLocaleString(language === "en" ? "en-GB" : "ru-RU", {
-        timeZone: "Europe/Madrid",
-        hour: "2-digit",
-        minute: "2-digit",
-        day: "2-digit",
-        month: "2-digit",
-      }),
-    ) +
+    escapeHtml(p.when) +
     reply
+  );
+}
+const mdEscape = (s: string) => s.replace(/([\\`*_[\]|<>~=#])/g, "\\$1");
+// Native Rich Message: Telegram renders the agent's Markdown itself (tables, code, headings).
+export function formatThreadRich(c: ThreadCard, language: "ru" | "en") {
+  const p = cardParts(c, language);
+  let reply = c.reply?.trim() ?? "";
+  if (reply.length > 3000) {
+    const n = reply.lastIndexOf("\n", 3000);
+    reply = reply.slice(0, n > 1500 ? n : 3000) + "\n\n…";
+  }
+  if ((reply.match(/^\s*```/gm) ?? []).length % 2) reply += "\n```";
+  return (
+    "**" +
+    p.heading +
+    "**\n\n📂 " +
+    mdEscape(p.place) +
+    "\n🧵 **" +
+    mdEscape(p.title) +
+    "**\n🤖 " +
+    mdEscape(p.agent) +
+    " · " +
+    p.when +
+    (reply
+      ? "\n\n<details><summary>" +
+        p.t("Ответ агента", "Agent reply") +
+        "</summary>\n\n" +
+        reply +
+        "\n\n</details>"
+      : "")
   );
 }
 // The deepest folder that contains the thread's working directory names its section.
@@ -185,4 +219,68 @@ export function sectionFor<T extends { path: string }>(
         path === f.path || path.startsWith(f.path.replace(/\/$/, "") + "/"),
     )
     .sort((a, b) => b.path.length - a.path.length)[0];
+}
+
+// Agent replies are Markdown; Telegram HTML has no tables, headings or lists.
+function inline(text: string) {
+  return text
+    .split(/(`[^`]+`)/)
+    .map((part) =>
+      /^`[^`]+`$/.test(part)
+        ? "<code>" + escapeHtml(part.slice(1, -1)) + "</code>"
+        : escapeHtml(part)
+            .replace(/\*\*(.+?)\*\*/g, "<b>$1</b>")
+            .replace(/__(.+?)__/g, "<b>$1</b>")
+            .replace(/(^|[\s(])\*([^*\s][^*]*?)\*(?=[\s).,:;!?]|$)/g, "$1<i>$2</i>")
+            .replace(
+              /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
+              '<a href="$2">$1</a>',
+            ),
+    )
+    .join("");
+}
+const tableSeparator = /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/;
+export function markdownExcerpt(md: string, limit = 700) {
+  let src = md.trim();
+  let cut = false;
+  if (src.length > limit) {
+    const n = src.lastIndexOf("\n", limit);
+    src = src.slice(0, n > limit / 2 ? n : limit);
+    cut = true;
+  }
+  const lines = src.split("\n");
+  const out: string[] = [];
+  let code = false;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (/^\s*```/.test(line)) {
+      code = !code;
+      continue;
+    }
+    if (code) {
+      out.push("<code>" + escapeHtml(line) + "</code>");
+      continue;
+    }
+    if (tableSeparator.test(line)) continue;
+    const row = line.match(/^\s*\|(.*)\|\s*$/);
+    if (row) {
+      const cells = row[1].split("|").map((x) => inline(x.trim()));
+      const header = tableSeparator.test(lines[i + 1] ?? "");
+      const text = cells.join(" · ");
+      out.push(header ? "<b>" + text + "</b>" : text);
+      continue;
+    }
+    const heading = line.match(/^\s*#{1,6}\s+(.*)$/);
+    if (heading) {
+      out.push("<b>" + inline(heading[1]) + "</b>");
+      continue;
+    }
+    const item = line.match(/^(\s*)[-*+]\s+(.*)$/);
+    if (item) {
+      out.push(item[1] + "• " + inline(item[2]));
+      continue;
+    }
+    out.push(inline(line));
+  }
+  return out.join("\n").trim() + (cut ? "…" : "");
 }
