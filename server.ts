@@ -7,6 +7,7 @@ import {
 } from "./settings";
 import { ChatBridge } from "./chat";
 import { routeUpdate, writeSpool } from "./ingress";
+import { menuCommands } from "./commands";
 import {
   classifyThread,
   eventKind,
@@ -70,6 +71,7 @@ const statusSchema = z.object({
   error: z.string().nullable(),
   queue: z.number(),
   ingressError: z.string().nullable(),
+  menu: z.array(z.object({ command: z.string(), description: z.string() })),
   topics: z.array(
     z.object({
       key: z.string(),
@@ -103,6 +105,7 @@ export const rpcContract = defineRpcContract({
     output: diagnosisSchema,
   },
   useEnvToken: { input: z.null(), output: z.boolean() },
+  syncMenu: { input: z.null(), output: statusSchema },
   eventsGet: {
     input: z.null(),
     output: z.object({
@@ -328,6 +331,9 @@ export default async function plugin(bb: BbPluginApi) {
       error: lastError,
       queue: store.list("queue:").length,
       ingressError,
+      menu:
+        store.get<{ command: string; description: string }[]>("menu:served") ??
+        [],
       topics: store.list<Topic>("topic:").map((x) => ({
         key: x.value.key,
         name: x.value.name,
@@ -345,64 +351,23 @@ export default async function plugin(bb: BbPluginApi) {
     if (!store.get("trackingSince")) store.put("trackingSince", Date.now());
     const tg = telegram(botToken, lifetime.signal);
     const me = await checkBot(tg);
-    if (store.get("commandsLanguage") !== cfg.language + ":v2") {
-      const labels =
-        cfg.language === "en"
-          ? [
-              "Bind this topic to a project",
-              "Chat menu",
-              "New chat",
-              "Find and connect chats",
-              "Agent and model",
-              "Choose a section",
-              "Last reply",
-              "Stop the run",
-              "Disconnect this chat",
-              "Active tasks",
-              "Service status",
-              "Help",
-              "Choose a server",
-              "Choose an agent profile",
-            ]
-          : [
-              "Привязать тему к проекту",
-              "Меню чата",
-              "Новый чат",
-              "Найти и подключить чат",
-              "Агент и модель",
-              "Выбрать раздел",
-              "Последний ответ",
-              "Остановить запуск",
-              "Отключить чат",
-              "Активные задачи",
-              "Состояние сервисов",
-              "Помощь",
-              "Выбрать сервер",
-              "Выбрать профиль агента",
-            ];
-      const commands = [
-        "project",
-        "menu",
-        "new",
-        "chats",
-        "model",
-        "section",
-        "history",
-        "stop",
-        "disconnect",
-        "tasks",
-        "status",
-        "help",
-        "server",
-        "profile",
-      ].map((command, i) => ({ command, description: labels[i] }));
+    const wanted = menuCommands(cfg.language as "ru" | "en");
+    const signature = cfg.language + ":" + JSON.stringify(wanted);
+    if (store.get("commandsLanguage") !== signature) {
       for (const language_code of ["", "ru", "en"])
         await tg("setMyCommands", {
-          commands,
+          commands: wanted,
           scope: { type: "chat", chat_id: OWNER_ID },
           language_code,
         });
-      store.put("commandsLanguage", cfg.language + ":v2");
+      // Read the menu back: the page shows what Telegram actually serves.
+      const served = await tg<{ command: string; description: string }[]>(
+        "getMyCommands",
+        { scope: { type: "chat", chat_id: OWNER_ID } },
+      );
+      store.put("menu:served", served);
+      if (JSON.stringify(served) === JSON.stringify(wanted))
+        store.put("commandsLanguage", signature);
     }
     username = me.username;
     topicsEnabled = me.topics;
@@ -839,6 +804,11 @@ export default async function plugin(bb: BbPluginApi) {
       store.put("events:config", value);
       wake?.();
       return true;
+    },
+    syncMenu: async () => {
+      store.del("commandsLanguage");
+      await sync();
+      return status();
     },
     useEnvToken: async () => {
       await settings.experimental_set({ botToken: null });

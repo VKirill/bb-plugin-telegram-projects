@@ -5,6 +5,7 @@ import type { rpcContract } from "./server";
 import type { z } from "zod";
 import type { preferencesSchema, Diagnosis } from "./settings";
 import type { EventKind, Events } from "./events";
+import { BOT_COMMANDS, type BotCommand } from "./commands";
 type Preferences = z.infer<typeof preferencesSchema>;
 type Rpc = ReturnType<typeof useRpc<typeof rpcContract>>;
 type T = (ru: string, en: string) => string;
@@ -165,6 +166,9 @@ function Panel() {
             init={() =>
               action(async () => setData(await rpc.call("initTopics", null)))
             }
+            syncMenu={() =>
+              action(async () => setData(await rpc.call("syncMenu", null)))
+            }
           />
         ) : tab === "events" ? (
           <EventsTab t={t} rpc={rpc} action={action} busy={busy} />
@@ -280,6 +284,7 @@ function Overview(props: {
   busy: boolean;
   sync: () => void;
   init: () => void;
+  syncMenu: () => void;
 }) {
   const { t, data } = props;
   if (!data) return null;
@@ -355,12 +360,104 @@ function Overview(props: {
           </div>
         )}
       </Section>
-      <Section title={t("Команды бота", "Bot commands")}>
-        <p className="text-sm text-muted-foreground">
-          /project · /chats · /new · /model · /section · /stop · /menu · /tasks
-        </p>
-      </Section>
+      <Commands t={t} data={data} busy={props.busy} syncMenu={props.syncMenu} />
     </>
+  );
+}
+
+const COMMAND_GROUPS: { id: BotCommand["group"]; ru: string; en: string }[] = [
+  { id: "topics", ru: "Темы и проекты", en: "Topics and projects" },
+  { id: "chat", ru: "Чат с агентом", en: "Chat with the agent" },
+  { id: "agent", ru: "Настройка нового чата", en: "New chat setup" },
+  { id: "tasks", ru: "Задачи", en: "Tasks" },
+];
+// What each command does, and whether Telegram's bot menu really shows it.
+function Commands(props: {
+  t: T;
+  data: any;
+  busy: boolean;
+  syncMenu: () => void;
+}) {
+  const { t } = props;
+  const served = new Set<string>(
+    (props.data.menu ?? []).map((c: { command: string }) => c.command),
+  );
+  const missing = BOT_COMMANDS.filter((c) => !c.args && !served.has(c.command));
+  const en = t("ru", "en") === "en";
+  return (
+    <Section
+      title={t("Команды бота", "Bot commands")}
+      aside={
+        <span className="flex flex-wrap items-center gap-2">
+          <span
+            className={
+              "tg-pill " +
+              (missing.length ? "tg-pill-danger" : "tg-pill-success")
+            }
+          >
+            {missing.length
+              ? t("меню бота не совпадает", "bot menu differs")
+              : t("меню бота синхронизировано", "bot menu in sync")}
+          </span>
+          <button
+            className="tg-btn"
+            disabled={props.busy}
+            onClick={props.syncMenu}
+          >
+            {t("Обновить меню", "Update menu")}
+          </button>
+        </span>
+      }
+    >
+      <p className="text-sm text-muted-foreground">
+        {t(
+          "Команды работают в теме проекта. Меню бота в Telegram строится из этого же списка; команды с параметром вводятся вручную.",
+          "Commands work inside a project topic. The Telegram bot menu is built from this list; commands with a parameter are typed by hand.",
+        )}
+      </p>
+      {COMMAND_GROUPS.map((g) => (
+        <div key={g.id} className="space-y-1">
+          <h3 className="text-sm font-semibold text-muted-foreground">
+            {t(g.ru, g.en)}
+          </h3>
+          <ul>
+            {BOT_COMMANDS.filter((c) => c.group === g.id).map((c) => (
+              <li
+                key={c.command}
+                className="tg-row flex flex-wrap items-start justify-between gap-2 py-2"
+              >
+                <span className="min-w-0 flex-1">
+                  <code className="tg-pill tg-pill-neutral mr-2">
+                    /{c.command}
+                    {c.args ? " " + c.args : ""}
+                  </code>
+                  <span className="font-medium">{en ? c.en : c.ru}</span>
+                  <span className="block text-sm text-muted-foreground mt-1">
+                    {en ? c.hintEn : c.hintRu}
+                  </span>
+                </span>
+                <span
+                  className={
+                    "tg-pill " +
+                    (c.args
+                      ? "tg-pill-muted"
+                      : served.has(c.command)
+                        ? "tg-pill-success"
+                        : "tg-pill-danger")
+                  }
+                >
+                  {c.args
+                    ? t("вручную", "typed")
+                    : served.has(c.command)
+                      ? t("в меню", "in menu")
+                      : t("нет в меню", "not in menu")}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+    </Section>
   );
 }
 
