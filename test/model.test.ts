@@ -58,6 +58,8 @@ test("baseline silent; meaningful changes enqueue once in linked project", () =>
   assert.equal(s.list("queue:").length, 1);
   assert.equal((s.list("queue:")[0].value as any).projectId, "proj_one");
   assert.deepEqual(changes(task, { ...task, title: "rename" }), []);
+  assert.deepEqual(changes(undefined, { ...task, status: "done" }), ["created", "status"]);
+  assert.deepEqual(changes(undefined, { ...task, status: "todo" }), ["created"]);
 });
 test("unlinked tracker never leaks into another project", () => {
   const s = memory();

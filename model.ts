@@ -74,7 +74,11 @@ export const states: Record<string, string> = {
   canceled: "Отменено",
 };
 export function changes(prev: Task | undefined, next: Task): string[] {
-  if (!prev) return ["created"];
+  // A task can be created and finished between two polls: report both steps.
+  if (!prev)
+    return ["done", "in_review", "canceled"].includes(next.status)
+      ? ["created", "status"]
+      : ["created"];
   const out: string[] = [];
   if (prev.status !== next.status) out.push("status");
   else if (!prev.agentsWorking && next.agentsWorking > 0) out.push("started");
