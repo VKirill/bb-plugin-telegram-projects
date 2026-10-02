@@ -133,6 +133,8 @@ export const english: Record<string, string> = {
   "</b>\n\nЗдесь появляются события задач этого проекта.\n\n/menu — управление чатом BB\n/new — новая сессия\n/chats — подключиться к существующему чату\n/model — агент и модель\n/tasks — задачи проекта\n\nВ Telegram приходят только ответы подключённого чата и события Tasks.":
     "</b>\n\nTask events for this project appear here.\n\n/menu — BB chat controls\n/new — new session\n/chats — connect to an existing chat\n/model — agent and model\n/tasks — project tasks\n\nOnly connected chat replies and Tasks events are delivered to Telegram.",
   "Открыть BB": "Open BB",
+  "Открыть в BB": "Open in BB",
+  "🔌 Подключить здесь": "🔌 Connect here",
   "Открыть Telegram Projects": "Open Telegram Projects",
   "Открыть ": "Open ",
   Принято: "Received",

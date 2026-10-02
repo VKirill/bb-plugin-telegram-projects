@@ -187,16 +187,17 @@ export function formatThreadRich(c: ThreadCard, language: "ru" | "en") {
     reply = reply.slice(0, n > 1500 ? n : 3000) + "\n\n…";
   }
   if ((reply.match(/^\s*```/gm) ?? []).length % 2) reply += "\n```";
+  // Blank lines separate paragraphs: single newlines are joined by Markdown.
   return (
-    "**" +
+    "### " +
     p.heading +
+    "\n\n**" +
+    mdEscape(p.title) +
     "**\n\n📂 " +
     mdEscape(p.place) +
-    "\n🧵 **" +
-    mdEscape(p.title) +
-    "**\n🤖 " +
+    " · 🤖 " +
     mdEscape(p.agent) +
-    " · " +
+    " · 🕒 " +
     p.when +
     (reply
       ? "\n\n<details><summary>" +

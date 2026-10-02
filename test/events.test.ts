@@ -104,8 +104,7 @@ test("rich card keeps the agent Markdown, escapes metadata and closes a cut code
     },
     "ru",
   );
-  assert.match(md, /^\*\*✅ Агент закончил работу\*\*/);
-  assert.match(md, /🧵 \*\*Fix \\\*bold\\\* \\\| table\*\*/);
+  assert.match(md, /^### ✅ Агент закончил работу\n\n\*\*Fix \\\*bold\\\* \\\| table\*\*\n\n📂 Клиенты · 🤖 Codex · 🕒 /);
   assert.match(md, /<details><summary>Ответ агента<\/summary>\n\n\| a \| b \|/);
   assert.equal((md.match(/^\s*```/gm) ?? []).length % 2, 0);
   assert.ok(md.endsWith("</details>"));

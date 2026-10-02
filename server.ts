@@ -567,9 +567,14 @@ export default async function plugin(bb: BbPluginApi) {
         reply_markup: {
           inline_keyboard: [
             [
+              ...(e.thread && cfg.chatEnabled && bridge
+                ? [bridge.connectButton(topic.threadId, e.thread.threadId)].filter(
+                    (k) => k !== undefined,
+                  )
+                : []),
               {
                 text: e.thread
-                  ? tr("Открыть тред")
+                  ? tr("Открыть в BB")
                   : e.kind === "test"
                     ? tr("Открыть Telegram Projects")
                     : tr("Открыть ") + String(e.key) + "",
