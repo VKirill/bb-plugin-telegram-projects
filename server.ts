@@ -107,11 +107,12 @@ export const rpcContract = defineRpcContract({
     output: diagnosisSchema,
   },
   useEnvToken: { input: z.null(), output: z.boolean() },
-  summaryCatalog: {
-    input: z.object({ providerId: z.string().max(120) }),
+  summaryDefaults: {
+    input: z.null(),
     output: z.object({
-      providers: z.array(z.object({ id: z.string(), name: z.string() })),
-      models: z.array(z.object({ id: z.string(), name: z.string() })),
+      providerId: z.string(),
+      model: z.string(),
+      reasoningLevel: z.string(),
     }),
   },
   syncMenu: { input: z.null(), output: statusSchema },
@@ -199,6 +200,16 @@ export default async function plugin(bb: BbPluginApi) {
     summaryModel: {
       type: "string",
       label: "Модель для саммери (пусто — по умолчанию провайдера)",
+      default: "",
+    },
+    summaryReasoning: {
+      type: "string",
+      label: "Уровень рассуждения для саммери",
+      default: "",
+    },
+    summaryServiceTier: {
+      type: "string",
+      label: "Тариф для саммери (fast или default)",
       default: "",
     },
     hideWithFolders: {
@@ -656,9 +667,32 @@ export default async function plugin(bb: BbPluginApi) {
   }
   // A hidden worker thread writes the summary with the chosen BB model; the sync loop only
   // polls it, so a slow model never blocks other deliveries. Failures keep the full reply.
+  async function summaryLabel(cfg: { summaryProvider: string; summaryModel: string }) {
+    if (!cfg.summaryProvider) return "BB";
+    const providers = await bb.sdk.providers.list({}).catch(() => []);
+    const provider =
+      providers.find((p) => p.id === cfg.summaryProvider)?.displayName ??
+      cfg.summaryProvider;
+    const model = cfg.summaryModel
+      ? await bb.sdk.providers
+          .models({ providerId: cfg.summaryProvider })
+          .then(
+            (c) =>
+              c.models.find((m) => m.model === cfg.summaryModel)?.displayName ??
+              cfg.summaryModel,
+          )
+          .catch(() => cfg.summaryModel)
+      : "";
+    return [provider, model].filter(Boolean).join(" · ");
+  }
   async function advanceSummaries(
     language: "ru" | "en",
-    cfg: { summaryProvider: string; summaryModel: string },
+    cfg: {
+      summaryProvider: string;
+      summaryModel: string;
+      summaryReasoning: string;
+      summaryServiceTier: string;
+    },
   ) {
     for (const { key, value: e } of store.list<Event>("queue:")) {
       if (e.summary?.state !== "pending" || !e.thread) continue;
@@ -666,9 +700,7 @@ export default async function plugin(bb: BbPluginApi) {
       const finish = async (text: string | null) => {
         if (text) {
           e.thread!.reply = text;
-          e.thread!.summaryModel =
-            [cfg.summaryProvider, cfg.summaryModel].filter(Boolean).join(" / ") ||
-            "BB";
+          e.thread!.summaryModel = await summaryLabel(cfg);
         }
         e.summary = { ...summary, state: text ? "done" : "failed" };
         store.put(key, e);
@@ -692,6 +724,12 @@ export default async function plugin(bb: BbPluginApi) {
             visibility: "hidden",
             ...(cfg.summaryProvider ? { providerId: cfg.summaryProvider } : {}),
             ...(cfg.summaryModel ? { model: cfg.summaryModel } : {}),
+            ...(cfg.summaryReasoning
+              ? { reasoningLevel: cfg.summaryReasoning as "low" }
+              : {}),
+            ...(cfg.summaryServiceTier
+              ? { serviceTier: cfg.summaryServiceTier as "fast" }
+              : {}),
             pluginMetadata: { role: "telegram-summary", threadId: e.thread.threadId },
           });
           e.summary = { state: "pending", workerId: worker.id, startedAt: Date.now() };
@@ -931,19 +969,19 @@ export default async function plugin(bb: BbPluginApi) {
       await sync();
       return status();
     },
-    summaryCatalog: async ({ providerId }) => {
-      const providers = (await bb.sdk.providers.list({}))
-        .filter((p) => p.available)
-        .map((p) => ({ id: p.id, name: p.displayName }));
-      const models = providerId
-        ? await bb.sdk.providers
-            .models({ providerId })
-            .then((c) =>
-              c.models.map((m) => ({ id: m.model, name: m.displayName ?? m.model })),
-            )
-            .catch(() => [])
-        : [];
-      return { providers, models };
+    // The native picker needs a concrete value: start from BB's own default model.
+    summaryDefaults: async () => {
+      const base = await bb.sdk.system.executionOptions({});
+      const providerId =
+        base.providers.find((p) => p.available)?.id ?? "claude-code";
+      const options = await bb.sdk.system.executionOptions({ providerId });
+      const model =
+        options.models.find((m) => m.isDefault) ?? options.models[0];
+      return {
+        providerId,
+        model: model?.model ?? "",
+        reasoningLevel: model?.defaultReasoningEffort ?? "medium",
+      };
     },
     useEnvToken: async () => {
       await settings.experimental_set({ botToken: null });

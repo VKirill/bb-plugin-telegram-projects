@@ -1,6 +1,11 @@
 import { useEffect, useState, type ReactNode } from "react";
 import "./app.css";
-import { definePluginApp, useRpc } from "@get-bb/plugin-sdk/app";
+import {
+  definePluginApp,
+  experimental_ProviderModelPicker as ProviderModelPicker,
+  useRpc,
+  type ExperimentalProviderModelPickerValue as PickerValue,
+} from "@get-bb/plugin-sdk/app";
 import type { rpcContract } from "./server";
 import type { z } from "zod";
 import type { preferencesSchema, Diagnosis } from "./settings";
@@ -552,17 +557,36 @@ function ReportTab(props: {
   save: () => void;
 }) {
   const { t, form, setForm } = props;
-  const [catalog, setCatalog] = useState<{
-    providers: { id: string; name: string }[];
-    models: { id: string; name: string }[];
-  }>({ providers: [], models: [] });
+  const [defaults, setDefaults] = useState<PickerValue | null>(null);
   useEffect(() => {
-    if (form.reportMode !== "summary") return;
+    if (form.reportMode !== "summary" || form.summaryProvider) return;
     void props.rpc
-      .call("summaryCatalog", { providerId: form.summaryProvider })
-      .then(setCatalog)
+      .call("summaryDefaults", null)
+      .then((d) => setDefaults(d as PickerValue))
       .catch(() => {});
   }, [form.reportMode, form.summaryProvider]);
+  const value: PickerValue | null = form.summaryProvider
+    ? {
+        providerId: form.summaryProvider,
+        model: form.summaryModel,
+        reasoningLevel: (form.summaryReasoning ||
+          "medium") as PickerValue["reasoningLevel"],
+        ...(form.summaryServiceTier
+          ? {
+              serviceTier:
+                form.summaryServiceTier as PickerValue["serviceTier"],
+            }
+          : {}),
+      }
+    : defaults;
+  const choose = (v: PickerValue) =>
+    setForm({
+      ...form,
+      summaryProvider: v.providerId,
+      summaryModel: v.model,
+      summaryReasoning: v.reasoningLevel,
+      summaryServiceTier: v.serviceTier ?? "",
+    });
   return (
     <Section title={t("Содержимое отчёта агента", "Agent report content")}>
       <div className="tg-seg" role="tablist">
@@ -592,48 +616,22 @@ function ReportTab(props: {
             )}
       </p>
       {form.reportMode === "summary" && (
-        <div className="grid sm:grid-cols-2 gap-3">
-          <label className="block font-medium">
-            {t("Провайдер", "Provider")}
-            <select
-              className="tg-input block w-full mt-2"
-              value={form.summaryProvider}
-              onChange={(e) =>
-                setForm({
-                  ...form,
-                  summaryProvider: e.target.value,
-                  summaryModel: "",
-                })
-              }
-            >
-              <option value="">{t("По умолчанию BB", "BB default")}</option>
-              {catalog.providers.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="block font-medium">
-            {t("Модель", "Model")}
-            <select
-              className="tg-input block w-full mt-2"
-              value={form.summaryModel}
-              disabled={!form.summaryProvider}
-              onChange={(e) =>
-                setForm({ ...form, summaryModel: e.target.value })
-              }
-            >
-              <option value="">
-                {t("По умолчанию провайдера", "Provider default")}
-              </option>
-              {catalog.models.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.name}
-                </option>
-              ))}
-            </select>
-          </label>
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="font-medium">
+            {t("Модель для саммери", "Summary model")}
+          </span>
+          {value ? (
+            <ProviderModelPicker value={value} onChange={choose} />
+          ) : (
+            <span className="text-sm text-muted-foreground">
+              {t("Загружаю модели BB…", "Loading BB models…")}
+            </span>
+          )}
+          {!form.summaryProvider && value && (
+            <span className="text-sm text-muted-foreground">
+              {t("модель BB по умолчанию", "BB default model")}
+            </span>
+          )}
         </div>
       )}
       <button

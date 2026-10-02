@@ -11,6 +11,8 @@ export const preferencesSchema = z
     reportMode: z.enum(["full", "summary"]),
     summaryProvider: z.string().max(120),
     summaryModel: z.string().max(250),
+    summaryReasoning: z.string().max(40),
+    summaryServiceTier: z.string().max(40),
     appUrl: z
       .string()
       .url()
