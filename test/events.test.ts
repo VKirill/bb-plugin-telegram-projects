@@ -125,8 +125,7 @@ test("summary card shows the summary openly and names the model; the prompt forb
     },
     "ru",
   );
-  assert.ok(!md.includes("<details>"));
-  assert.match(md, /- сделано\n- проверено\n\n<footer>Саммери: claude-code \/ haiku<\/footer>$/);
+  assert.match(md, /<details><summary>Саммери<\/summary>\n\n- сделано\n- проверено\n\n<\/details>\n\n<footer>Модель саммери: claude-code \/ haiku<\/footer>$/);
   const prompt = summaryPrompt("Тред", "x".repeat(20000), "ru");
   assert.match(prompt, /Не используй инструменты/);
   assert.ok(prompt.length < 12500);

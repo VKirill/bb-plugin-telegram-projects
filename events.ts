@@ -204,10 +204,12 @@ export function formatThreadRich(c: ThreadCard, language: "ru" | "en") {
     (!reply
       ? ""
       : c.summaryModel
-        ? "\n\n" +
+        ? "\n\n<details><summary>" +
+          p.t("Саммери", "Summary") +
+          "</summary>\n\n" +
           reply +
-          "\n\n<footer>" +
-          p.t("Саммери: ", "Summary: ") +
+          "\n\n</details>\n\n<footer>" +
+          p.t("Модель саммери: ", "Summary model: ") +
           mdEscape(c.summaryModel) +
           "</footer>"
         : "\n\n<details><summary>" +
