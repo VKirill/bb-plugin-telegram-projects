@@ -667,24 +667,6 @@ export default async function plugin(bb: BbPluginApi) {
   }
   // A hidden worker thread writes the summary with the chosen BB model; the sync loop only
   // polls it, so a slow model never blocks other deliveries. Failures keep the full reply.
-  async function summaryLabel(cfg: { summaryProvider: string; summaryModel: string }) {
-    if (!cfg.summaryProvider) return "BB";
-    const providers = await bb.sdk.providers.list({}).catch(() => []);
-    const provider =
-      providers.find((p) => p.id === cfg.summaryProvider)?.displayName ??
-      cfg.summaryProvider;
-    const model = cfg.summaryModel
-      ? await bb.sdk.providers
-          .models({ providerId: cfg.summaryProvider })
-          .then(
-            (c) =>
-              c.models.find((m) => m.model === cfg.summaryModel)?.displayName ??
-              cfg.summaryModel,
-          )
-          .catch(() => cfg.summaryModel)
-      : "";
-    return [provider, model].filter(Boolean).join(" · ");
-  }
   async function advanceSummaries(
     language: "ru" | "en",
     cfg: {
@@ -700,7 +682,7 @@ export default async function plugin(bb: BbPluginApi) {
       const finish = async (text: string | null) => {
         if (text) {
           e.thread!.reply = text;
-          e.thread!.summaryModel = await summaryLabel(cfg);
+          e.thread!.summaryModel = cfg.summaryModel || cfg.summaryProvider || "BB";
         }
         e.summary = { ...summary, state: text ? "done" : "failed" };
         store.put(key, e);
