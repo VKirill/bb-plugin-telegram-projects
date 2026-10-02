@@ -171,7 +171,17 @@ function Panel() {
             }
           />
         ) : tab === "events" ? (
-          <EventsTab t={t} rpc={rpc} action={action} busy={busy} />
+          <>
+            <ReportTab
+              t={t}
+              rpc={rpc}
+              form={form}
+              setForm={setForm}
+              busy={busy}
+              save={() => action(() => savePreferences(form))}
+            />
+            <EventsTab t={t} rpc={rpc} action={action} busy={busy} />
+          </>
         ) : tab === "topics" ? (
           <TopicsTab
             t={t}
@@ -531,6 +541,111 @@ const GROUPS: {
     ],
   },
 ];
+
+// Full agent reply or a summary written by any BB model the user picks.
+function ReportTab(props: {
+  t: T;
+  rpc: Rpc;
+  form: Preferences;
+  setForm: (f: Preferences) => void;
+  busy: boolean;
+  save: () => void;
+}) {
+  const { t, form, setForm } = props;
+  const [catalog, setCatalog] = useState<{
+    providers: { id: string; name: string }[];
+    models: { id: string; name: string }[];
+  }>({ providers: [], models: [] });
+  useEffect(() => {
+    if (form.reportMode !== "summary") return;
+    void props.rpc
+      .call("summaryCatalog", { providerId: form.summaryProvider })
+      .then(setCatalog)
+      .catch(() => {});
+  }, [form.reportMode, form.summaryProvider]);
+  return (
+    <Section title={t("Содержимое отчёта агента", "Agent report content")}>
+      <div className="tg-seg" role="tablist">
+        {(["full", "summary"] as const).map((mode) => (
+          <button
+            key={mode}
+            role="tab"
+            aria-selected={form.reportMode === mode}
+            className="tg-seg-item"
+            onClick={() => setForm({ ...form, reportMode: mode })}
+          >
+            {mode === "full"
+              ? t("Полный ответ", "Full reply")
+              : t("Саммери", "Summary")}
+          </button>
+        ))}
+      </div>
+      <p className="text-sm text-muted-foreground">
+        {form.reportMode === "full"
+          ? t(
+              "В карточку попадает ответ агента целиком, свёрнутым блоком.",
+              "The card carries the agent's whole reply in a collapsed block.",
+            )
+          : t(
+              "Выбранная модель BB пишет 3–6 пунктов: что сделано, итог, что требует внимания. Модель работает в скрытом треде и только с текстом ответа. Если саммери не готово за 3 минуты, приходит полный ответ. Короткие ответы приходят как есть.",
+              "The chosen BB model writes 3–6 points: what was done, the result, what needs attention. It runs in a hidden thread on the reply text only. If the summary is not ready within 3 minutes, the full reply is sent. Short replies are sent as is.",
+            )}
+      </p>
+      {form.reportMode === "summary" && (
+        <div className="grid sm:grid-cols-2 gap-3">
+          <label className="block font-medium">
+            {t("Провайдер", "Provider")}
+            <select
+              className="tg-input block w-full mt-2"
+              value={form.summaryProvider}
+              onChange={(e) =>
+                setForm({
+                  ...form,
+                  summaryProvider: e.target.value,
+                  summaryModel: "",
+                })
+              }
+            >
+              <option value="">{t("По умолчанию BB", "BB default")}</option>
+              {catalog.providers.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block font-medium">
+            {t("Модель", "Model")}
+            <select
+              className="tg-input block w-full mt-2"
+              value={form.summaryModel}
+              disabled={!form.summaryProvider}
+              onChange={(e) =>
+                setForm({ ...form, summaryModel: e.target.value })
+              }
+            >
+              <option value="">
+                {t("По умолчанию провайдера", "Provider default")}
+              </option>
+              {catalog.models.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+      )}
+      <button
+        className="tg-btn tg-accent"
+        disabled={props.busy}
+        onClick={props.save}
+      >
+        {t("Сохранить", "Save")}
+      </button>
+    </Section>
+  );
+}
 
 function EventsTab(props: {
   t: T;

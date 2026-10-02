@@ -14,6 +14,7 @@ import {
   eventsSchema,
   formatThreadCard,
   formatThreadRich,
+  summaryPrompt,
   readEvents,
   route,
   sectionFor,
@@ -106,6 +107,13 @@ export const rpcContract = defineRpcContract({
     output: diagnosisSchema,
   },
   useEnvToken: { input: z.null(), output: z.boolean() },
+  summaryCatalog: {
+    input: z.object({ providerId: z.string().max(120) }),
+    output: z.object({
+      providers: z.array(z.object({ id: z.string(), name: z.string() })),
+      models: z.array(z.object({ id: z.string(), name: z.string() })),
+    }),
+  },
   syncMenu: { input: z.null(), output: statusSchema },
   eventsGet: {
     input: z.null(),
@@ -176,6 +184,22 @@ export default async function plugin(bb: BbPluginApi) {
       type: "string",
       label: "Публичный адрес BB",
       default: bb.server.experimental_appUrl || "https://vechkasov.getbb.app",
+    },
+    reportMode: {
+      type: "select",
+      label: "Что присылать в отчёте агента: полный ответ или саммери",
+      options: ["full", "summary"],
+      default: "full",
+    },
+    summaryProvider: {
+      type: "string",
+      label: "Провайдер для саммери (пусто — по умолчанию BB)",
+      default: "",
+    },
+    summaryModel: {
+      type: "string",
+      label: "Модель для саммери (пусто — по умолчанию провайдера)",
+      default: "",
     },
     hideWithFolders: {
       type: "boolean",
@@ -537,9 +561,11 @@ export default async function plugin(bb: BbPluginApi) {
       topic.introText = intro;
       store.put("topic:" + topic.key, topic);
     }
+    await advanceSummaries(cfg.language as "ru" | "en", cfg);
     let sent = 0;
     for (const { key, value: e } of store.list<Event>("queue:")) {
       if (sent >= 15) break;
+      if (e.summary?.state === "pending") continue;
       const agency = e.kind.startsWith("agency_");
       const kind = eventKind(e);
       const decision =
@@ -627,6 +653,71 @@ export default async function plugin(bb: BbPluginApi) {
     lastSync = new Date().toISOString();
     lastError = taskFailure;
     await publishProjection(cfg.projectionFile, allTasks);
+  }
+  // A hidden worker thread writes the summary with the chosen BB model; the sync loop only
+  // polls it, so a slow model never blocks other deliveries. Failures keep the full reply.
+  async function advanceSummaries(
+    language: "ru" | "en",
+    cfg: { summaryProvider: string; summaryModel: string },
+  ) {
+    for (const { key, value: e } of store.list<Event>("queue:")) {
+      if (e.summary?.state !== "pending" || !e.thread) continue;
+      const summary = e.summary;
+      const finish = async (text: string | null) => {
+        if (text) {
+          e.thread!.reply = text;
+          e.thread!.summaryModel =
+            [cfg.summaryProvider, cfg.summaryModel].filter(Boolean).join(" / ") ||
+            "BB";
+        }
+        e.summary = { ...summary, state: text ? "done" : "failed" };
+        store.put(key, e);
+        if (summary.workerId)
+          await bb.sdk.threads
+            .archive({ threadId: summary.workerId })
+            .catch(() => {});
+      };
+      try {
+        if (!summary.workerId) {
+          const source = await bb.sdk.threads.get({ threadId: e.thread.threadId });
+          if (!source.environmentId) {
+            await finish(null);
+            continue;
+          }
+          const worker = await bb.sdk.threads.spawn({
+            projectId: e.projectId,
+            environment: { type: "reuse", environmentId: source.environmentId },
+            prompt: summaryPrompt(e.thread.title, e.thread.reply ?? "", language),
+            title: "Telegram · саммери · " + e.thread.title.slice(0, 60),
+            visibility: "hidden",
+            ...(cfg.summaryProvider ? { providerId: cfg.summaryProvider } : {}),
+            ...(cfg.summaryModel ? { model: cfg.summaryModel } : {}),
+            pluginMetadata: { role: "telegram-summary", threadId: e.thread.threadId },
+          });
+          e.summary = { state: "pending", workerId: worker.id, startedAt: Date.now() };
+          store.put(key, e);
+          continue;
+        }
+        const worker = await bb.sdk.threads.get({ threadId: summary.workerId });
+        if (worker.status === "error" || worker.archivedAt || worker.deletedAt) {
+          await finish(null);
+          continue;
+        }
+        if (worker.status === "idle" && !worker.queuedMessageCount) {
+          const out = await bb.sdk.threads
+            .output({ threadId: summary.workerId, signal: lifetime.signal })
+            .then((r) => r.output?.trim() || null)
+            .catch(() => null);
+          if (out) {
+            await finish(out);
+            continue;
+          }
+        }
+        if (Date.now() - (summary.startedAt ?? 0) > 180_000) await finish(null);
+      } catch {
+        await finish(null);
+      }
+    }
   }
   async function collectThreadEvents(
     ev: Events,
@@ -722,6 +813,9 @@ export default async function plugin(bb: BbPluginApi) {
             at: Date.now(),
           },
         };
+        const cfg = await settings.get();
+        if (cfg.reportMode === "summary" && reply && reply.length > 500)
+          event.summary = { state: "pending" };
         store.put("queue:" + id, event);
       } catch {
         // A thread that cannot be read now is retried with its next change.
@@ -836,6 +930,20 @@ export default async function plugin(bb: BbPluginApi) {
       store.del("commandsLanguage");
       await sync();
       return status();
+    },
+    summaryCatalog: async ({ providerId }) => {
+      const providers = (await bb.sdk.providers.list({}))
+        .filter((p) => p.available)
+        .map((p) => ({ id: p.id, name: p.displayName }));
+      const models = providerId
+        ? await bb.sdk.providers
+            .models({ providerId })
+            .then((c) =>
+              c.models.map((m) => ({ id: m.model, name: m.displayName ?? m.model })),
+            )
+            .catch(() => [])
+        : [];
+      return { providers, models };
     },
     useEnvToken: async () => {
       await settings.experimental_set({ botToken: null });

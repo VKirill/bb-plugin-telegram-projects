@@ -109,3 +109,25 @@ test("rich card keeps the agent Markdown, escapes metadata and closes a cut code
   assert.equal((md.match(/^\s*```/gm) ?? []).length % 2, 0);
   assert.ok(md.endsWith("</details>"));
 });
+test("summary card shows the summary openly and names the model; the prompt forbids tools", async () => {
+  const { formatThreadRich, summaryPrompt } = await import("../events");
+  const md = formatThreadRich(
+    {
+      outcome: "done",
+      status: "idle",
+      project: "Клиенты",
+      section: null,
+      title: "T",
+      agent: "codex",
+      reply: "- сделано\n- проверено",
+      at: 0,
+      summaryModel: "claude-code / haiku",
+    },
+    "ru",
+  );
+  assert.ok(!md.includes("<details>"));
+  assert.match(md, /- сделано\n- проверено\n\n<footer>Саммери: claude-code \/ haiku<\/footer>$/);
+  const prompt = summaryPrompt("Тред", "x".repeat(20000), "ru");
+  assert.match(prompt, /Не используй инструменты/);
+  assert.ok(prompt.length < 12500);
+});

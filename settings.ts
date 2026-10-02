@@ -8,6 +8,9 @@ export const preferencesSchema = z
     richReplies: z.boolean(),
     deleteTopics: z.boolean(),
     hideWithFolders: z.boolean(),
+    reportMode: z.enum(["full", "summary"]),
+    summaryProvider: z.string().max(120),
+    summaryModel: z.string().max(250),
     appUrl: z
       .string()
       .url()

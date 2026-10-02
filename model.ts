@@ -40,6 +40,12 @@ export type Event = {
   agencyTopicId?: number;
   /** BB thread reports (kind thread_*): who did what and where. */
   thread?: import("./events").ThreadCard & { threadId: string };
+  /** Summary mode: the card waits for a hidden worker thread, then falls back to the full reply. */
+  summary?: {
+    state: "pending" | "done" | "failed";
+    workerId?: string;
+    startedAt?: number;
+  };
   id: string;
   projectId: string;
   taskId: string;
