@@ -210,7 +210,13 @@ export class ChatBridge {
   connectButton(topicId: number, threadId: string): Key | undefined {
     const b = this.binding(topicId);
     if (!b || b.threadId === threadId) return;
-    return this.button(b, "connect", this.tr("🔌 Подключить здесь"), threadId);
+    // Not a menu kind: the report stays, the chat menu arrives as a new message.
+    return this.button(
+      b,
+      "connectReport",
+      this.tr("🔌 Подключить здесь"),
+      threadId,
+    );
   }
   private nav(b: Binding): Key[][] {
     return [
@@ -1264,6 +1270,7 @@ export class ChatBridge {
         );
         return;
       }
+      case "connectReport":
       case "connect": {
         const selected = await this.validThread(b, a.arg!);
         const defaults = await this.d.sdk.threads.defaultExecutionOptions({
