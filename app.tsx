@@ -1378,7 +1378,7 @@ export default definePluginApp((app) => {
   app.slots.navPanel({
     id: "telegram-projects",
     title: "Telegram",
-    icon: "MessageCircle",
+    icon: "MessageSquare",
     path: "telegram-projects",
     component: Panel,
   });

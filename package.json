@@ -10,7 +10,7 @@
     "name": "Telegram Projects",
     "description": "BB projects as Telegram topics: agent reports and summaries, Tasks events, and chat with BB threads by text or voice.",
     "branding": {
-      "icon": "MessageCircle"
+      "icon": "MessageSquare"
     },
     "server": "./server.ts",
     "app": "./app.tsx"
