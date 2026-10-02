@@ -509,13 +509,18 @@ export default async function plugin(bb: BbPluginApi) {
               tr(
                 "</b>\n\nЗдесь появляются события задач и отчёты агентов этого проекта: кто закончил работу, кто ждёт ответа, что остановилось.\n\n/menu — управление чатом BB\n/new — новая сессия\n/chats — подключиться к существующему чату\n/model — агент и модель\n/tasks — задачи проекта\n\nКакие события присылать, настраивается на странице плагина, вкладка «События».",
               );
-      if (topic.introText === text) continue;
+      // The BB iPhone app claims /projects/* links; the bare origin opens only in a browser.
+      const open = topic.key.startsWith("proj_")
+        ? base.origin + "/projects/" + encodeURIComponent(topic.key)
+        : base.origin;
+      const intro = text + "\n" + open;
+      if (topic.introText === intro) continue;
       const payload = {
         text,
         parse_mode: "HTML",
         link_preview_options: { is_disabled: true },
         reply_markup: {
-          inline_keyboard: [[{ text: tr("Открыть BB"), url: base.origin }]],
+          inline_keyboard: [[{ text: tr("Открыть BB"), url: open }]],
         },
       };
       if (topic.introId)
@@ -528,7 +533,7 @@ export default async function plugin(bb: BbPluginApi) {
         });
         topic.introId = sent.message_id;
       }
-      topic.introText = text;
+      topic.introText = intro;
       store.put("topic:" + topic.key, topic);
     }
     let sent = 0;
