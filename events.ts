@@ -130,7 +130,7 @@ const agents: Record<string, string> = {
   opencode: "OpenCode",
   gemini: "Gemini",
 };
-function cardParts(c: ThreadCard, language: "ru" | "en") {
+function cardParts(c: ThreadCard, language: "ru" | "en", timeZone = "") {
   const t = (ru: string, en: string) => (language === "en" ? en : ru);
   return {
     t,
@@ -149,7 +149,7 @@ function cardParts(c: ThreadCard, language: "ru" | "en") {
     title: c.title.slice(0, 200),
     agent: agents[c.agent] ?? c.agent,
     when: new Date(c.at).toLocaleString(language === "en" ? "en-GB" : "ru-RU", {
-      timeZone: "Europe/Madrid",
+      ...(timeZone ? { timeZone } : {}),
       hour: "2-digit",
       minute: "2-digit",
       day: "2-digit",
@@ -158,8 +158,12 @@ function cardParts(c: ThreadCard, language: "ru" | "en") {
   };
 }
 // HTML fallback for clients or chats where Rich Messages are refused.
-export function formatThreadCard(c: ThreadCard, language: "ru" | "en") {
-  const p = cardParts(c, language);
+export function formatThreadCard(
+  c: ThreadCard,
+  language: "ru" | "en",
+  timeZone = "",
+) {
+  const p = cardParts(c, language, timeZone);
   const reply = c.reply?.trim()
     ? "\n\n<blockquote expandable>" +
       markdownExcerpt(c.reply) +
@@ -181,8 +185,12 @@ export function formatThreadCard(c: ThreadCard, language: "ru" | "en") {
 }
 const mdEscape = (s: string) => s.replace(/([\\`*_[\]|<>~=#])/g, "\\$1");
 // Native Rich Message: Telegram renders the agent's Markdown itself (tables, code, headings).
-export function formatThreadRich(c: ThreadCard, language: "ru" | "en") {
-  const p = cardParts(c, language);
+export function formatThreadRich(
+  c: ThreadCard,
+  language: "ru" | "en",
+  timeZone = "",
+) {
+  const p = cardParts(c, language, timeZone);
   let reply = c.reply?.trim() ?? "";
   if (reply.length > 3000) {
     const n = reply.lastIndexOf("\n", 3000);
@@ -303,4 +311,15 @@ export function summaryPrompt(
   return language === "en"
     ? `Summarize this coding agent's reply for a Telegram notification. Give 3–6 short Markdown bullet points: what was done, the result, and anything that needs the user's attention. No introduction, no closing remarks. Do not use tools or read files: work only with the text below. Write in English.\n\nThread: ${title}\n\nAgent reply:\n${body}`
     : `Сделай саммери ответа агента для уведомления в Telegram. 3–6 коротких пунктов списком в Markdown: что сделано, итог и что требует внимания пользователя. Без вступления и без заключения. Не используй инструменты и не читай файлы: работай только с текстом ниже. Пиши по-русски.\n\nТред: ${title}\n\nОтвет агента:\n${body}`;
+}
+
+/** An unknown zone would make toLocaleString throw and block delivery: fall back to the server's. */
+export function safeTimeZone(zone: string) {
+  if (!zone) return "";
+  try {
+    new Intl.DateTimeFormat("en", { timeZone: zone });
+    return zone;
+  } catch {
+    return "";
+  }
 }

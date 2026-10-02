@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { translate, type Language } from "./companion/aivech/src/locale";
+import { translate, type Language } from "./locale";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { randomBytes } from "node:crypto";
@@ -12,7 +12,6 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import {
-  OWNER_ID,
   type Store,
   type Topic,
   type Telegram,
@@ -27,8 +26,8 @@ type CreateThreadEnvironmentArgs = Parameters<
 >[0]["environment"];
 export const inputSchema = z.object({
   updateId: z.number().int().nonnegative(),
-  ownerId: z.literal(OWNER_ID),
-  chatId: z.literal(OWNER_ID),
+  ownerId: z.number().int(),
+  chatId: z.number().int(),
   topicId: z.number().int().nonnegative(),
   messageId: z.number().int(),
   text: z.string().max(16000).optional(),
@@ -144,7 +143,10 @@ export class ChatBridge {
       store: Store;
       sdk: BbPluginApi["sdk"];
       tg: Telegram;
-      spool: string;
+      /** The paired Telegram user; input from anyone else is refused. */
+      owner: () => number | undefined;
+      /** Optional companion spool; the plugin's own receiver writes to storage directly. */
+      spool?: string;
       baseUrl: string;
       signal: AbortSignal;
       wake?: () => void;
@@ -301,6 +303,9 @@ export class ChatBridge {
   // Every update enters durable storage before the companion's spool file is removed.
   accept(raw: unknown) {
     const input = inputSchema.parse(raw);
+    const owner = this.d.owner();
+    if (!owner || input.ownerId !== owner || input.chatId !== owner)
+      throw Error("foreign_identity");
     const k = "chat:in:" + input.updateId;
     if (!this.s.get(k))
       this.s.put(k, {
@@ -310,6 +315,7 @@ export class ChatBridge {
       } satisfies Inbox);
   }
   ingestFiles() {
+    if (!this.d.spool) return;
     mkdirSync(this.d.spool, { recursive: true, mode: 0o700 });
     for (const name of readdirSync(this.d.spool)
       .filter((n) => /^\d+\.json$/.test(n))

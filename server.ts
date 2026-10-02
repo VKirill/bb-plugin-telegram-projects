@@ -1,12 +1,12 @@
 import { agencyIntegration, agencyDeliverySchema, agencyCapabilitySchema, agencyReceiptSchema } from "./agency-integration";
-import { translate } from "./companion/aivech/src/locale";
+import { translate } from "./locale";
 import {
   preferencesSchema,
   diagnosisSchema,
   diagnose,
 } from "./settings";
 import { ChatBridge } from "./chat";
-import { routeUpdate, writeSpool } from "./ingress";
+import { routeUpdate } from "./ingress";
 import { menuCommands } from "./commands";
 import {
   classifyThread,
@@ -15,6 +15,7 @@ import {
   formatThreadCard,
   formatThreadRich,
   summaryPrompt,
+  safeTimeZone,
   readEvents,
   route,
   sectionFor,
@@ -23,6 +24,8 @@ import {
 } from "./events";
 import { makeChatControlPublisher, writeJsonAtomic } from "./json-file";
 import { mkdir } from "node:fs/promises";
+import { join } from "node:path";
+import { randomInt } from "node:crypto";
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import {
@@ -40,8 +43,6 @@ import {
   readTasks,
 } from "./adapters";
 import {
-  OWNER_ID,
-  BOT_ID,
   ensureTopic,
   reconcileProjects,
   ingest,
@@ -73,6 +74,7 @@ const statusSchema = z.object({
   error: z.string().nullable(),
   queue: z.number(),
   ingressError: z.string().nullable(),
+  owner: z.number().nullable(),
   menu: z.array(z.object({ command: z.string(), description: z.string() })),
   topics: z.array(
     z.object({
@@ -132,10 +134,18 @@ export const rpcContract = defineRpcContract({
   },
   eventsSave: { input: eventsSchema, output: z.boolean() },
   initTopics: { input: z.null(), output: statusSchema },
+  pairing: {
+    input: z.null(),
+    output: z.object({
+      owner: z.number().nullable(),
+      code: z.string().nullable(),
+      link: z.string().nullable(),
+    }),
+  },
+  unpair: { input: z.null(), output: z.boolean() },
   status: { input: z.null(), output: statusSchema },
   sync: { input: z.null(), output: statusSchema },
 });
-const SPOOL = "/Users/vechkasov/toolkit/service-bots/private/bb-chat-inbox";
 export default async function plugin(bb: BbPluginApi) {
   const settings = bb.settings.define({
     agencyEnabled: {type:"boolean",label:"Уведомления из Агентства",default:false},
@@ -168,13 +178,23 @@ export default async function plugin(bb: BbPluginApi) {
     tokenEnv: {
       type: "string",
       label: "Имя токена бота в Env Catalog",
-      default: "TG_AIVECH_BOT",
+      default: "TELEGRAM_BOT_TOKEN",
     },
-    projectionFile: {
+    companionDir: {
       type: "string",
-      label: "Файл состояния для сервисного бота на сервере",
-      default:
-        "/Users/vechkasov/toolkit/service-bots/private/telegram-projects.json",
+      label:
+        "Companion folder on the server (optional) / Папка компаньона на сервере (необязательно)",
+      default: "",
+    },
+    smsTopic: {
+      type: "boolean",
+      label: "SMS topic for a companion service / Тема SMS для компаньона",
+      default: false,
+    },
+    timeZone: {
+      type: "string",
+      label: "Time zone, e.g. Europe/Madrid (empty: server) / Часовой пояс",
+      default: "",
     },
     cliPath: {
       type: "string",
@@ -270,7 +290,7 @@ export default async function plugin(bb: BbPluginApi) {
   let flight: Promise<void> | null = null;
   let lastError: string | null = null;
   let topicsEnabled = false;
-  let username = "aivech_bot";
+  let username = "";
   let lastSync: string | null = null;
   let wake: (() => void) | undefined;
   let ingressError: string | null = null;
@@ -293,6 +313,18 @@ export default async function plugin(bb: BbPluginApi) {
       };
     return envToken.value ? "env" : "none";
   }
+  // Owner and bot are learned at runtime: pairing sets the owner, the first getMe the bot.
+  const ownerId = () => store.get<number>("owner:id");
+  const botId = () => store.get<number>("bot:id");
+  function pairCode() {
+    let code = store.get<string>("pair:code");
+    if (!code) {
+      code = String(randomInt(100000, 1000000));
+      store.put("pair:code", code);
+    }
+    return code;
+  }
+  let chatWake: (() => void) | undefined;
   async function events(): Promise<Events> {
     const saved = store.get("events:config");
     if (saved) return readEvents(saved);
@@ -367,6 +399,7 @@ export default async function plugin(bb: BbPluginApi) {
       error: lastError,
       queue: store.list("queue:").length,
       ingressError,
+      owner: ownerId() ?? null,
       menu:
         store.get<{ command: string; description: string }[]>("menu:served") ??
         [],
@@ -385,21 +418,27 @@ export default async function plugin(bb: BbPluginApi) {
     if (!cfg.enabled) return;
     if ((store.get<number>("retryAt") ?? 0) > Date.now()) return;
     if (!store.get("trackingSince")) store.put("trackingSince", Date.now());
-    const tg = telegram(botToken, lifetime.signal);
-    const me = await checkBot(tg);
+    const tg = telegram(botToken, lifetime.signal, 15_000, ownerId);
+    const me = await checkBot(tg, botId());
+    if (!botId()) store.put("bot:id", me.id);
+    username = me.username;
+    if (!ownerId()) {
+      lastError = "owner_not_paired";
+      return;
+    }
     const wanted = menuCommands(cfg.language as "ru" | "en");
     const signature = cfg.language + ":" + JSON.stringify(wanted);
     if (store.get("commandsLanguage") !== signature) {
       for (const language_code of ["", "ru", "en"])
         await tg("setMyCommands", {
           commands: wanted,
-          scope: { type: "chat", chat_id: OWNER_ID },
+          scope: { type: "chat", chat_id: ownerId() },
           language_code,
         });
       // Read the menu back: the page shows what Telegram actually serves.
       const served = await tg<{ command: string; description: string }[]>(
         "getMyCommands",
-        { scope: { type: "chat", chat_id: OWNER_ID } },
+        { scope: { type: "chat", chat_id: ownerId() } },
       );
       store.put("menu:served", served);
       if (JSON.stringify(served) === JSON.stringify(wanted))
@@ -490,17 +529,17 @@ export default async function plugin(bb: BbPluginApi) {
       if (store.list("topic:").length) store.put("topicsBootstrapped", true);
       else {
         lastError = "topics_not_initialized";
-        await publishProjection(cfg.projectionFile, allTasks);
+        await publishProjection(cfg.companionDir, allTasks);
         return;
       }
     }
     if (!topicsEnabled) {
       lastError = "threaded_mode_disabled";
-      await publishProjection(cfg.projectionFile, allTasks);
+      await publishProjection(cfg.companionDir, allTasks);
       return;
     }
     await ensureTopic(store, tg, "navigation", tr("🧭 Навигация"));
-    await ensureTopic(store, tg, "sms", "📱 SMS");
+    if (cfg.smsTopic) await ensureTopic(store, tg, "sms", "📱 SMS");
     // Telegram cannot hide a topic in a private chat: hiding removes it; showing creates a new one.
     for (const b of store.list<{ topicId: number; projectId: string; folderId?: string }>("chat:binding:").map((x) => x.value)) {
       const main = store.get<Topic>("topic:" + b.projectId)?.threadId === b.topicId;
@@ -531,10 +570,16 @@ export default async function plugin(bb: BbPluginApi) {
       if (!topic.threadId || topic.missingSince) continue;
       let text =
         topic.key === "navigation"
-          ? tr("<b>🧭 Рабочее пространство Кирилла</b>\n\n") +
+          ? tr("<b>🧭 Рабочее пространство BB</b>\n\n") +
             visible.map((p) => "📂 " + escapeHtml(p.name)).join("\n") +
             tr(
-              "\n\nВ темах проектов — чаты BB и уведомления Tasks.\n📱 SMS — коды и сообщения на телефон.\n\n/project — привязать новую тему\n/chats — чаты BB\n/model — агент и модель\n/tasks — активные задачи\n/menu — управление",
+              "\n\nВ темах проектов — чаты BB, отчёты агентов и уведомления Tasks.",
+            ) +
+            (store.get<Topic>("topic:sms")?.threadId
+              ? tr("\n📱 SMS — коды и сообщения на телефон.")
+              : "") +
+            tr(
+              "\n\n/project — привязать новую тему\n/chats — чаты BB\n/model — агент и модель\n/tasks — активные задачи\n/menu — управление",
             )
           : topic.key === "sms"
             ? tr(
@@ -573,6 +618,7 @@ export default async function plugin(bb: BbPluginApi) {
       store.put("topic:" + topic.key, topic);
     }
     await advanceSummaries(cfg.language as "ru" | "en", cfg);
+    const zone = safeTimeZone(cfg.timeZone);
     let sent = 0;
     for (const { key, value: e } of store.list<Event>("queue:")) {
       if (sent >= 15) break;
@@ -635,8 +681,8 @@ export default async function plugin(bb: BbPluginApi) {
       const html = {
         ...common,
         text: e.thread
-          ? formatThreadCard(e.thread, cfg.language as "ru" | "en")
-          : formatEvent(e, cfg.language as "ru" | "en"),
+          ? formatThreadCard(e.thread, cfg.language as "ru" | "en", zone)
+          : formatEvent(e, cfg.language as "ru" | "en", zone),
         parse_mode: "HTML",
       };
       // Agent reports go out as native Rich Messages; HTML stays as the fallback.
@@ -644,7 +690,11 @@ export default async function plugin(bb: BbPluginApi) {
         await tg("sendRichMessage", {
           ...common,
           rich_message: {
-            markdown: formatThreadRich(e.thread, cfg.language as "ru" | "en"),
+            markdown: formatThreadRich(
+              e.thread,
+              cfg.language as "ru" | "en",
+              zone,
+            ),
           },
         }).catch((err) => {
           if (err instanceof TelegramFailure && err.code === "telegram_400")
@@ -663,7 +713,7 @@ export default async function plugin(bb: BbPluginApi) {
       if (at < Date.now() - 30 * 86400_000) store.del(key);
     lastSync = new Date().toISOString();
     lastError = taskFailure;
-    await publishProjection(cfg.projectionFile, allTasks);
+    await publishProjection(cfg.companionDir, allTasks);
   }
   // A hidden worker thread writes the summary with the chosen BB model; the sync loop only
   // polls it, so a slow model never blocks other deliveries. Failures keep the full reply.
@@ -842,13 +892,15 @@ export default async function plugin(bb: BbPluginApi) {
       }
     }
   }
+  // Only for a companion service that reads topics from a file (for example SMS delivery).
   async function publishProjection(
-    path: string,
+    dir: string,
     items: { task: Task; tracker: Tracker }[],
   ) {
+    if (!dir) return;
     const data = {
-      botId: BOT_ID,
-      ownerId: OWNER_ID,
+      botId: botId(),
+      ownerId: ownerId(),
       updatedAt: Date.now(),
       topicsEnabled,
       error: lastError,
@@ -871,7 +923,7 @@ export default async function plugin(bb: BbPluginApi) {
         }))
         .slice(0, 500),
     };
-    await writeJsonAtomic(path, data);
+    await writeJsonAtomic(join(dir, "telegram-projects.json"), data);
   }
   async function sync() {
     if (flight) return flight;
@@ -913,11 +965,15 @@ export default async function plugin(bb: BbPluginApi) {
     },
     checkConnection: async ({ token }) => {
       const c = await settings.get();
-      return diagnose(token?.trim() || (await botToken().catch(() => "")));
+      return diagnose(
+        token?.trim() || (await botToken().catch(() => "")),
+        fetch,
+        botId(),
+      );
     },
     saveToken: async ({ token }) => {
       const clean = token.trim();
-      const result = await diagnose(clean);
+      const result = await diagnose(clean, fetch, botId());
       if (result.valid && result.sameBot && !result.error && !result.webhook) {
         await settings.experimental_set({ botToken: clean });
       }
@@ -970,6 +1026,22 @@ export default async function plugin(bb: BbPluginApi) {
       envToken.at = 0;
       return (await tokenSource()) === "env";
     },
+    // The owner is whoever sends "/start <code>" to the bot from a private chat.
+    pairing: async () => {
+      const owner = ownerId() ?? null;
+      if (owner) return { owner, code: null, link: null };
+      const code = pairCode();
+      return {
+        owner,
+        code,
+        link: username ? `https://t.me/${username}?start=${code}` : null,
+      };
+    },
+    unpair: async () => {
+      store.del("owner:id");
+      store.del("commandsLanguage");
+      return true;
+    },
     initTopics: async () => {
       store.put("topicsBootstrapped", true);
       await sync();
@@ -983,42 +1055,42 @@ export default async function plugin(bb: BbPluginApi) {
   });
   bb.cli.register({
     name: "telegram-projects",
-    summary: "Проекты, чаты BB и уведомления Tasks в Telegram",
+    summary: "BB project topics, chats and Tasks notifications in Telegram",
     commands: [
       {
         name: "chat-forget",
-        summary: "Удалить только привязку темы, сохранив чаты",
+        summary: "Remove a topic binding and keep the chats",
         usage: "bb telegram-projects chat-forget <topic-id>",
       },
       {
         name: "chat-status",
-        summary: "Состояние общения с BB",
+        summary: "Chat bridge status",
         usage: "bb telegram-projects chat-status --json",
       },
       {
         name: "menu",
-        summary: "Показать меню чата в теме проекта",
+        summary: "Show the chat menu in a project topic",
         usage: "bb telegram-projects menu <project-id>",
       },
       {
         name: "test",
-        summary: "Отправить явно отмеченную проверку в тему проекта",
+        summary: "Send a clearly marked test card to a project topic",
         usage: "bb telegram-projects test <project-id>",
       },
       {
         name: "status",
-        summary: "Состояние и темы",
+        summary: "Status and topics",
         usage: "bb telegram-projects status --json",
       },
       {
         name: "sync",
-        summary: "Синхронизировать сейчас",
+        summary: "Sync now",
         usage: "bb telegram-projects sync --json",
       },
       {
         name: "bind",
         summary:
-          "Привязать существующую тему после неопределённого ответа Telegram",
+          "Bind an existing topic to a project, SMS or navigation",
         usage:
           "bb telegram-projects bind <project-id|sms|navigation> <topic-id>",
       },
@@ -1046,8 +1118,8 @@ export default async function plugin(bb: BbPluginApi) {
           return { exitCode: 1, stderr: "chat_topic_required" };
         await bridge.handle({
           updateId: Date.now(),
-          ownerId: OWNER_ID,
-          chatId: OWNER_ID,
+          ownerId: ownerId()!,
+          chatId: ownerId()!,
           topicId: topic.threadId,
           messageId: 0,
           text: "/menu",
@@ -1069,9 +1141,11 @@ export default async function plugin(bb: BbPluginApi) {
           projectId: key,
           taskId: "demo",
           key: "TEST",
-          title:
+          title: translate(
+            cfg.language as "ru" | "en",
             "Уведомления Tasks будут приходить в тему своего проекта. Это проверка доставки, не настоящая задача.",
-          tracker: "Проверка настройки",
+          ),
+          tracker: translate(cfg.language as "ru" | "en", "Проверка настройки"),
           status: "todo",
           kind: "test",
           dueDate: null,
@@ -1109,8 +1183,8 @@ export default async function plugin(bb: BbPluginApi) {
             .some((x) => x.value.key !== key && x.value.threadId === threadId)
         )
           return { exitCode: 1, stderr: "topic_already_bound" };
-        const tg = telegram(botToken, lifetime.signal);
-        await checkBot(tg);
+        const tg = telegram(botToken, lifetime.signal, 15_000, ownerId);
+        await checkBot(tg, botId());
         if (topic.name)
           await tg("editForumTopic", {
             message_thread_id: threadId,
@@ -1185,10 +1259,12 @@ export default async function plugin(bb: BbPluginApi) {
   });
   bb.background.service("telegram-chat", {
     async start(signal) {
-      const spool = SPOOL;
-      const control =
-        "/Users/vechkasov/toolkit/service-bots/private/telegram-chat.json";
-      const publishControl = makeChatControlPublisher(control);
+      // The control file and spool exist only for an optional companion receiver.
+      const companion = (await settings.get()).companionDir;
+      const spool = companion ? join(companion, "bb-chat-inbox") : undefined;
+      const publishControl = companion
+        ? makeChatControlPublisher(join(companion, "telegram-chat.json"))
+        : async () => {};
       let rich = true;
       let currentUrl = "";
       let language: "ru" | "en" = "ru";
@@ -1199,11 +1275,14 @@ export default async function plugin(bb: BbPluginApi) {
         pendingWake = true;
         resume?.();
       };
-      await mkdir(spool, { recursive: true, mode: 0o700 });
-      const watcher = watch(spool, (_event, name) => {
-        if (name?.toString().endsWith(".json")) wakeChat();
-      });
-      watcher.on("error", () => {}); // Timed polling remains as recovery if filesystem events are lost.
+      chatWake = wakeChat;
+      if (spool) await mkdir(spool, { recursive: true, mode: 0o700 });
+      const watcher = spool
+        ? watch(spool, (_event, name) => {
+            if (name?.toString().endsWith(".json")) wakeChat();
+          })
+        : undefined;
+      watcher?.on("error", () => {}); // Timed polling remains as recovery if filesystem events are lost.
       try {
         while (!signal.aborted) {
           const cfg = await settings.get();
@@ -1212,7 +1291,7 @@ export default async function plugin(bb: BbPluginApi) {
             currentUrl = new URL(cfg.appUrl).origin;
             language = cfg.language as "ru" | "en";
             if (!bridge) {
-              await mkdir(spool, { recursive: true, mode: 0o700 });
+              if (spool) await mkdir(spool, { recursive: true, mode: 0o700 });
               activeAbort = new AbortController();
               const bridgeSignal = AbortSignal.any([
                 signal,
@@ -1222,7 +1301,8 @@ export default async function plugin(bb: BbPluginApi) {
               bridge = new ChatBridge({
                 store,
                 sdk: bb.sdk,
-                tg: telegram(botToken, bridgeSignal),
+                tg: telegram(botToken, bridgeSignal, 15_000, ownerId),
+                owner: ownerId,
                 spool,
                 get baseUrl() {
                   return currentUrl;
@@ -1264,7 +1344,7 @@ export default async function plugin(bb: BbPluginApi) {
           });
         }
       } finally {
-        watcher.close();
+        watcher?.close();
         await bridge?.dispose();
       }
     },
@@ -1319,12 +1399,13 @@ export default async function plugin(bb: BbPluginApi) {
           }
           signal.addEventListener("abort", done, { once: true });
         });
-      const tg = telegram(botToken, signal, 40_000);
+      const tg = telegram(botToken, signal, 40_000, ownerId);
       while (!signal.aborted) {
         const cfg = await settings.get();
-        if (!cfg.enabled) {
+        // Hold updates until the chat bridge exists, so none is consumed and lost.
+        if (!cfg.enabled || (cfg.chatEnabled && ownerId() && !bridge)) {
           ingressError = null;
-          await pause(5000);
+          await pause(cfg.enabled ? 1000 : 5000);
           continue;
         }
         try {
@@ -1335,15 +1416,26 @@ export default async function plugin(bb: BbPluginApi) {
           });
           ingressError = null;
           for (const u of updates) {
-            const route = routeUpdate(u);
-            if (route.kind === "chat" && cfg.chatEnabled)
-              writeSpool(SPOOL, route.input);
-            else if (route.kind === "tasks")
+            const route = routeUpdate(u, ownerId(), store.get("pair:code"));
+            if (route.kind === "pair") {
+              store.put("owner:id", route.userId);
+              store.del("pair:code");
+              await tg("sendMessage", {
+                text: translate(
+                  cfg.language as "ru" | "en",
+                  "✅ Бот привязан к BB. Темы проектов появятся в этом чате в течение минуты.",
+                ),
+              });
+              wake?.();
+            } else if (route.kind === "chat" && cfg.chatEnabled && bridge) {
+              bridge.accept(route.input);
+              chatWake?.();
+            } else if (route.kind === "tasks")
               await tg("sendMessage", {
                 message_thread_id: route.topicId || undefined,
                 text: taskList(route.topicId, cfg.language as "ru" | "en"),
               });
-            if (route.kind !== "tasks" && route.callbackId)
+            if ("callbackId" in route && route.callbackId)
               await tg("answerCallbackQuery", {
                 callback_query_id: route.callbackId,
               }).catch(() => {});

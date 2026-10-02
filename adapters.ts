@@ -2,8 +2,6 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { z } from "zod";
 import {
-  BOT_ID,
-  OWNER_ID,
   TelegramFailure,
   taskSchema,
   type Task,
@@ -15,6 +13,8 @@ export function telegram(
   token: TokenSource,
   signal: AbortSignal,
   timeoutMs = 15_000,
+  /** The paired owner's private chat; every chat method targets it. */
+  owner: () => number | undefined = () => undefined,
 ): Telegram {
   return async <T>(
     method: string,
@@ -34,7 +34,7 @@ export function telegram(
           method === "setMyDescription" ||
           method === "setMyShortDescription"
             ? {}
-            : { chat_id: OWNER_ID }),
+            : { chat_id: owner() }),
         }),
         signal: AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]),
       });
@@ -86,10 +86,13 @@ export async function readEnvToken(
     return "";
   }
 }
-export async function checkBot(tg: Telegram) {
+// The first bot seen is remembered; a token of another bot is refused afterwards,
+// because topics and bindings belong to the bot that created them.
+export async function checkBot(tg: Telegram, expected?: number) {
   const me = await tg("getMe", {});
-  if (me.id !== BOT_ID) throw new Error("unexpected_bot_identity");
+  if (expected && me.id !== expected) throw new Error("unexpected_bot_identity");
   return {
+    id: Number(me.id),
     username: String(me.username),
     topics: me.has_topics_enabled === true,
   };

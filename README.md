@@ -1,111 +1,102 @@
-# Telegram Projects for BB — Interactive Telegram Bridge, Voice Input & Tasks Sync
+# Telegram Projects for BB
 
-[![BB Compatibility](https://img.shields.io/badge/BB-%3E%3D0.43-blue.svg)](https://getbb.app)
+[![BB](https://img.shields.io/badge/BB-%3E%3D0.43-blue.svg)](https://getbb.app)
 [![Plugin SDK](https://img.shields.io/badge/Plugin%20SDK-%3E%3D0.4.87-green.svg)](https://getbb.app)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> Управляйте проектами и чатами BB прямо из Telegram: темы проектов, меню активных сессий, голосовой ввод и синхронизация уведомлений BB Tasks.
+Work with your BB agents from Telegram. Every BB project gets its own topic in a private chat with your bot: agents report there when they finish, stop or need an answer, Tasks events arrive in the same place, and you can talk to any BB thread by text or voice.
 
-Персональный плагин BB для @aivech_bot. **Версия 0.5.0**: темы проектов, уведомления Tasks и двустороннее общение с настоящими сессиями BB. На Mac mini работают плагин и отдельный companion, принимающий входящие Telegram-сообщения и доставляющий SMS.
+**English** · [Русский](#русский)
 
-## Настройки бота / Bot settings
+## What you get
 
-Открой **Telegram** в боковом меню BB. На странице доступны проверка и замена токена текущего бота, диагностика BotFather, язык RU/EN, синхронизация, общение, Rich Messages, уведомления Tasks, звук, удаление тем и публичный URL BB. Нажми «Сохранить настройки», чтобы применить язык и поведение.
+- **Agent reports.** When an agent finishes a turn, waits for your answer or stops, its project topic gets a card with the project, section, thread, agent and time. The reply is collapsed; Telegram renders its tables, headings, code and lists natively.
+- **Summaries.** Instead of the full reply, a BB model of your choice can write 3–6 points: what was done, the result, what needs attention. You pick provider, model and reasoning with BB's own model picker.
+- **Connect from the report.** «🔌 Connect here» binds the reported thread to the topic. Your next messages go to that agent, and its answers come back to Telegram.
+- **Chat with BB.** Start a new chat or connect an existing one in any project topic. Voice messages are transcribed by BB's transcription service.
+- **Tasks events.** New tasks, status changes, completion, due dates and worker errors from the BB Tasks plugin.
+- **Event rules.** Turn every agent and Tasks event on or off, with or without sound, for all projects or selected ones.
+- **Project Folders aware.** Hiding a project or section in Projects & Sections removes its topic from Telegram.
+- **Russian or English.** The plugin page, the bot menu, topic introductions, cards and bot messages follow the selected language.
 
-**Check connection** uses getMe/getWebhookInfo without sending messages. It reports token validity, bot identity, Threaded Mode, user-created topics and webhook conflicts. Enable Threaded Mode; disable “Disallow users to create new threads” for manual topics. Restrict bot usage is optional and can only be checked manually. Bot Management and Bot-to-Bot are not needed for BB agents. [Official API fields](https://core.telegram.org/bots/api#user).
+## Setup
 
-Token replacement is restricted to the existing personal bot. It is saved atomically with mode 0600, never returned to the frontend. The receiver reloads its credentials through the existing launchd KeepAlive service. Another bot/owner requires a migration; this remains a personal plugin, not general marketplace onboarding.
+1. Create a bot with [@BotFather](https://t.me/BotFather). In *Bot Settings → Threads Settings* turn **Threaded Mode** on and **Disallow users to create new threads** off.
+2. Install the plugin and open **Telegram** in the BB sidebar.
+3. **Connection** tab: paste the bot token and press *Check and save token*. Alternatively store the token in Env Catalog under `TELEGRAM_BOT_TOKEN` (the name is a setting).
+4. **General** tab: turn on *Project sync* and save.
+5. **Connection** tab → *Owner*: open the shown link or send `/start <code>` to the bot. The bot answers only this Telegram account from then on.
+6. **Overview** tab: press *Create topics*. One topic per BB project appears in the bot chat, plus a navigation topic.
 
-Language applies to new menus, command descriptions, questions, progress and service notifications; user content and agent output are preserved. Managed topic introductions are updated. Already queued messages keep their original language. Russian remains the default.
+## Bot commands
 
-## Начать
+Commands work inside a project topic. The bot menu in Telegram is built from the same list, and the Overview tab shows whether Telegram serves it.
 
-В теме проекта отправь `/menu`. Для нового разговора выбери «Новый чат» и напиши первое сообщение. Для существующего — `/chats` → чат → «Подключиться». Следующие сообщения и голос продолжают выбранную сессию, видимую и в BB.
+| Command | What it does |
+| --- | --- |
+| `/menu` | Topic card: connected chat, server, agent, model, section and controls |
+| `/project` | Bind this topic to a BB project |
+| `/new` | The next message starts a new BB thread |
+| `/chats` | Find and connect an existing thread |
+| `/history` | Last reply of the connected thread |
+| `/stop` | Stop the agent after confirmation |
+| `/disconnect` | Unbind the thread; history stays in BB |
+| `/model`, `/profile`, `/section`, `/server` | Agent, model, CLI profile, folder and machine for a new chat |
+| `/tasks` | Open tasks of the topic's project |
+| `/use <thread-id>`, `/say <text>` | Connect a thread by ID; send text that starts with `/` |
 
-Создай дополнительную тему в Telegram и отправь `/project`: выбери проект, затем `/model` для агента и модели. `/section` выбирает папку для нового чата. Меню команд доступно кнопкой Telegram. [Полная инструкция](docs/usage.md).
+## Requirements and costs
 
-## Что работает
+- BB 0.43 or later. The bot polls Telegram from the BB server, so the server needs outbound access to `api.telegram.org`. No webhook and no public port.
+- Your own Telegram bot. Messages of connected chats, agent reports and task titles are sent to Telegram.
+- Optional plugins: **Tasks** for task events, **Projects & Sections** for sections and hiding, **CLI Agents** for native agent profiles, **Env Catalog** for storing the token.
+- Summaries and voice use the BB providers and transcription service you configured, with their usage costs.
+- Telegram cannot hide a topic in a private bot chat, so hiding a project deletes its topic with its history; showing it again creates a new topic. *Delete topics of deleted projects* works the same way and can be turned off.
 
-- Проект BB → основная тема Telegram. Создание/переименование синхронизируются; дополнительные пользовательские темы привязываются через `/project`.
-- `/new`, `/chats`, `/use <thread-id>`, `/history`, `/disconnect`, `/stop`; список чатов с пагинацией и просмотром перед подключением. Остановка требует нажатия подтверждения; история сохраняется.
-- Выбор провайдера и модели из BB, выбор каталога Projects & Sections для нового разговора. Существующий чат сохраняет своё окружение. Инструкции проекта загружает штатный провайдер BB.
-- Голос до 10 минут/15 МБ: скачивание в память → настроенная транскрибация BB → сообщение в тот же чат. Распознанный текст виден в Telegram. Отдельного ключа транскрибации нет.
-- Финальные ответы как native Rich Messages, текстовый fallback при отказе API. Статус — обновляемая карточка; внутренние рассуждения не извлекаются. Длинные ответы разбиваются на части.
-- Штатные BB-вопросы с одним выбором или свободным ответом; allow-once/deny для разрешений. Сложные/множественные формы ведут в BB. Наличие таких вопросов зависит от провайдера и режима.
-- Уведомления Tasks: новые задачи, статусы, работа исполнителя, сроки, ошибка прикреплённого worker. Подпроект определяется через linkedBbProjectId. Завершение worker само по себе не считается завершением задачи.
-- Отчёты агентов в тему проекта: агент закончил ход, ждёт ответа или разрешения, тред остановлен или упал. Карточка подписана проектом, разделом Project Folders, названием треда и агентом, содержит кратко последний ответ и кнопку «Открыть тред». Подагенты и чаты, уже подключённые к Telegram, не дублируются.
-- Вкладка «События»: каждое событие агентов и Tasks включается отдельно, со звуком или без, для всех или выбранных проектов.
-- Связь с Project Folders: скрытый проект или раздел убирает свою тему из Telegram (в личном чате с ботом тему можно только удалить, вместе с историей); показанный снова получает новую тему. Отчёты из треда в скрытом разделе не отправляются.
-- Другие непривязанные переписки не наблюдаются. `/history` читает последний ответ только явно выбранного чата. Скрытые служебные workers не предлагаются для подключения.
+## Privacy
 
-## Установка и эксплуатация
+The bot token is stored as a secret plugin setting or read from Env Catalog; it is never returned to the plugin page. Only the paired Telegram account is served; groups and other users are ignored. Agent output for summaries is sent only to the BB model you choose.
 
-Node.js 24+, BB 0.43+, SDK 0.4.84. `npm ci`, `npm run check`, `npm test`, `npm run build`, `bb plugin install .`.
+## Advanced
 
-У новой установки enabled=false и chatEnabled=false. Личная установка уже включена. [Companion](companion/aivech/README.md) развёртывается отдельно; не запускать второй polling-процесс с тем же токеном.
+- **Time zone** (General tab): times in cards use the BB server's zone unless you set one, for example `Europe/London`.
+- **Companion service** (General → Advanced): a folder where the plugin writes its topic list and reads incoming messages of a companion process, plus an optional SMS topic. Not needed for normal use. The [companion example](companion/aivech/README.md) forwards SMS from a local inbox.
+- CLI: `bb telegram-projects status|sync|test <project-id>|bind <project-id|navigation|sms> <topic-id>|chat-status|chat-forget <topic-id>`.
 
-Настройки: enabled, chatEnabled, richReplies, configFile, projectionFile, cliPath, appUrl, deleteTopics, notifyTasks, notifyWorkerErrors, soundOnReview. При изменении configFile/appUrl требуется reload чат-транспорта. Страница BB: `/plugins/telegram-projects/telegram-projects`.
+## Development
 
-CLI:
+```sh
+npm install
+npm run check   # TypeScript
+npm test        # unit tests
+npm run build   # bb plugin build
+```
 
-- `bb telegram-projects status --json` — общая диагностика.
-- `bb telegram-projects chat-status --json` — привязки, очереди, категории ошибок.
-- `bb telegram-projects menu <project-id>` — отправить меню в основную тему проекта.
-- `bb telegram-projects sync --json` — сверить проекты и Tasks.
-- `bb telegram-projects test <project-id>` — тестовая карточка Tasks.
-- `bb telegram-projects bind <project-id|sms|navigation> <topic-id>` — восстановить основную тему; сначала проверить её назначение.
-- `bb telegram-projects chat-forget <topic-id>` — убрать только привязку разговора, сохранив BB/Telegram-историю.
+[Changelog](CHANGELOG.md) · [Architecture](docs/architecture.md) · [Contributing](CONTRIBUTING.md) · [License: MIT](LICENSE)
 
-## Хранение и восстановление
+---
 
-Персональные bot ID 8461763634 и owner ID 259034221 проверяются на обеих границах. Токен берётся из секретной настройки плагина, если он сохранён на странице плагина; иначе из записи Env Catalog `tokenEnv` (по умолчанию `TG_AIVECH_BOT`). Токен не передаётся браузеру или в Git. Пути персональной установки фиксированы; универсальный onboarding пока впереди.
+## Русский
 
-Плагин — единственный `getUpdates`-получатель (сервис `telegram-ingress`). До обработки он атомарно сохраняет update в mode-0600 файл `private/bb-chat-inbox` и отвечает на `/tasks`. Companion работает с `"polling": false` и только доставляет SMS.
+Работайте с агентами BB из Telegram. У каждого проекта BB своя тема в личном чате с вашим ботом: туда приходят отчёты агентов (закончил, остановился, ждёт ответа) и события Tasks, а с любым тредом BB можно переписываться текстом или голосом.
 
-Темы хранятся в базе плагина. Пустая база не создаёт темы сама: существующие темы привязываются через `bind`, новый набор создаётся кнопкой «Создать темы». Так новая установка не дублирует темы рядом с уже существующими. Плагин переносит его в собственную SQLite и удаляет файл. Для одной темы действует последовательная обработка; разные темы обслуживаются независимо, максимум четыре одновременно. Обычные сообщения активному агенту передаются через BB send(mode=auto), то есть штатную очередь/steering BB.
+### Что умеет
 
-Плагин хранит привязки, незавершённые входящие/исходящие сообщения, callback ID и квитанции. После обработки очищает текст входящего сообщения, после доставки — текст исходящего. Основные завершённые записи очереди удаляются через 7 дней; вспомогательные привязки/квитанции остаются в plugin storage. Кнопки истекают через сутки и проверяют поколение привязки; повторное нажатие не выполняет команду снова. Исходные Telegram-сообщения и история BB сохраняются в своих приложениях.
+- **Отчёты агентов** с проектом, разделом, тредом, агентом и временем; ответ свёрнут, таблицы, заголовки и код Telegram рисует сам.
+- **Саммери** вместо полного ответа: выбранная в родном селекторе BB модель пишет 3–6 пунктов.
+- **«🔌 Подключить здесь»** подключает тред из отчёта к теме, дальше переписка идёт с этим агентом.
+- **Чат с BB**: новый чат или подключение к существующему, голос распознаёт BB.
+- **События Tasks** и **правила событий**: каждое событие отдельно, со звуком или без, для всех или выбранных проектов.
+- **Связь с Projects & Sections**: скрытый проект или раздел убирает свою тему.
+- **Русский или английский**: страница, меню бота, вступления тем, карточки и сообщения бота переключаются вместе.
 
-При обрыве после внешнего вызова невозможно гарантировать exactly-once. Неопределённое входящее действие не повторяется автоматически: бот предлагает проверить сессию перед повтором. При неопределённой отправке в Telegram возможен дубль; подтверждённые части не повторяются. 429 учитывает retry_after. После перепривязки отложенные ответы старого чата не отправляются в новый. При недоступном BB включённый companion сохраняет входящие до восстановления; это не подтверждение выполнения агентом.
+### Как подключить
 
-## Удаление тем и границы
+1. Создайте бота в [@BotFather](https://t.me/BotFather), включите **Threaded Mode** и выключите **Disallow users to create new threads**.
+2. Установите плагин и откройте **Telegram** в боковом меню BB.
+3. Вкладка **Подключение**: вставьте токен и нажмите «Проверить и сохранить токен» или положите его в Env Catalog под именем `TELEGRAM_BOT_TOKEN`.
+4. Вкладка **Общие**: включите «Синхронизацию проектов».
+5. Вкладка **Подключение** → «Владелец»: откройте ссылку или отправьте боту `/start <код>`. Дальше бот отвечает только этому аккаунту.
+6. Вкладка **Обзор**: нажмите «Создать темы».
 
-deleteTopics=true: удаление проекта удаляет **основную тему со всей историей** после отсутствия проекта минимум 30 секунд в успешных снимках. Дополнительные пользовательские темы автоматически не удаляются. Выключение плагина темы не удаляет. Не очищать plugin storage при обновлении: там привязки и очереди.
-
-Опрос проектов/Tasks — каждые 15 секунд плюс сигнал изменения проекта; промежуточные статусы могут быть пропущены. Это обзор, не полный журнал Tasks. Ручное удаление темы Telegram требует восстановления привязки. Файлы/фото входящим транспортом пока не передаются агенту; сложные формы и полная история открываются в BB.
-
-## Документы
-
-[Инструкция](docs/usage.md) · [Проверка 0.2](docs/verification-0.2.md) · [Исследование аналогов](docs/research.md) · [Архитектура](docs/architecture.md) · [План развития](docs/roadmap.md) · [Разработка](CONTRIBUTING.md)
-
-Репозиторий приватный, публичная лицензия не выбрана (UNLICENSED). В маркетплейс не отправлен.
-
-В 0.3.1: прокрутка настроек, короткие названия разделов, событийная доставка нажатий и переходы меню внутри одной карточки. [Проверка и обзор grammY/Rich Messages](docs/interaction-0.3.1.md).
-
-В 0.4.0 выбор модели нового чата открывает профили установленного CLI Agents (Codex, Claude Code, OpenCode), если они есть. Доступен вариант по умолчанию; модели и профили показаны по две кнопки в ряд. Выбор относится к проекту, машине и существующему окружению раздела. Смена провайдера/раздела сбрасывает профиль. При старте профиль проверяется заново и передаётся штатным маркером CLI Agents; исчезнувший профиль не заменяется молча на default. Для раздела без зарегистрированного окружения сначала создай чат/окружение в BB либо используй default. В существующем чате нативная роль сохраняется; новый профиль требует нового чата.
-
-Карточка нового чата показывает читаемые провайдер/модель, профиль и имя раздела. Остановка и отключение скрыты до подключения. Codex profiles применяют только developer_instructions в пределах возможностей CLI Agents, не все поля config.toml.
-
-В 0.4.1 список профилей показывает 8 агентов на странице (2 в ряд), номер страницы и навигацию. Default — отдельная кнопка. Projects & Sections определяет рабочий раздел; CLI Agents — доступные роли. Отсутствующий/выключенный CLI Agents пропускает шаг профиля после модели.
-
-В 0.5.0 `/server` (кнопка «Сервер») выбирает подключённую машину для нового чата. У проекта должен быть зарегистрирован каталог на этой машине. Модели и профили загружаются с выбранного сервера; смена сервера сбрасывает раздел, модель и профиль. `/profile` повторно открывает профили. При пустом каталоге CLI Agents показывается объяснение; при отсутствии плагина шаг пропускается. Существующие чаты сохраняют своё окружение. Файлы между серверами автоматически не копируются.
-
-## Tags & Ecosystem
-`bb`, `bb-plugin`, `telegram`, `telegram-bot`, `tasks`, `voice-input`, `remote-control`, `developer-tools`
-
-
-## API для Агентства (v1)
-
-Необязательная интеграция: `agencyCapabilities`, `agencyConfigure`, `agencyEnqueue`,
-`agencyDeliveryStatus`. По умолчанию `agencyEnabled=false`. Использует существующий
-бот, связанные темы проектов и очередь. Не создаёт нового получателя getUpdates.
-Пакет: deliveryId/projectId/jobId/title/kind; произвольные адресаты и значения
-секретных форм не принимаются. Повтор deliveryId с иным содержимым отклоняется.
-Тема фиксируется при постановке; перепривязка проекта не перенаправляет старую
-доставку. Агентство пока не запускает автоматическую отправку из задач.
-
-`telegram.notification.delivered` доступно как результат проверки receipt;
-push-подписка в диспетчер Агентства ещё не подключена. Вопрос доставляется ссылкой
-на задачу BB. Ответы простых вопросов по-прежнему обслуживает существующий мост
-конкретного привязанного чата. Секреты заполняются в BB.
-
-В 0.5.2 служебный файл Telegram-чата записывается асинхронно только при запуске и изменении enabled/language. Сводка проектов также записывается асинхронно; её отметка свежести продолжает обновляться. Обе записи атомарные, с правами 0600. Опрос входящих сообщений и привязки чатов сохранены.
+Требования, стоимость и ограничения — в английском разделе выше: свой бот, исходящий доступ сервера BB к Telegram, необязательные плагины Tasks, Projects & Sections, CLI Agents и Env Catalog. В личном чате с ботом Telegram умеет только удалять темы, поэтому скрытие проекта удаляет его тему вместе с историей.

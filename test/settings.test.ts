@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { diagnose } from "../settings";
-import { translate, english } from "../companion/aivech/src/locale";
-import { BOT_ID } from "../model";
+import { translate, english } from "../locale";
+const BOT_ID = 8461763634;
 const token = "123456:" + "a".repeat(30);
 test("diagnostics are read only, expose flags and never token or webhook URL", async () => {
   const methods: string[] = [];
@@ -38,8 +38,10 @@ test("invalid, rejected and foreign bot tokens are distinguished", async () => {
   );
   assert.equal(
     (
-      await diagnose(token, async () =>
-        Response.json({ ok: true, result: { id: 1 } }),
+      await diagnose(
+        token,
+        async () => Response.json({ ok: true, result: { id: 1 } }),
+        BOT_ID,
       )
     ).sameBot,
     false,

@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { routeUpdate } from "../ingress";
-import { OWNER_ID } from "../model";
+import { routeUpdate as route } from "../ingress";
+const routeUpdate = (u: unknown) => route(u, OWNER_ID);
+const OWNER_ID = 259034221;
 const chat = { id: OWNER_ID, type: "private" };
 const from = { id: OWNER_ID };
 test("owner text in a topic becomes a chat input", () => {
@@ -85,4 +86,15 @@ test("/tasks is answered by the plugin; bb: callbacks and new topics reach the b
     },
   });
   assert.equal(created.kind === "chat" && created.input.text, "/project");
+});
+test("before pairing only /start with the page code binds the owner", () => {
+  const u = (text: string, id = 42) => ({
+    update_id: 1,
+    message: { message_id: 1, chat: { id, type: "private" }, from: { id }, text },
+  });
+  assert.deepEqual(route(u("/start 123456"), undefined, "123456"), { kind: "pair", userId: 42 });
+  assert.equal(route(u("/start 999999"), undefined, "123456").kind, "ignore");
+  assert.equal(route(u("привет"), undefined, "123456").kind, "ignore");
+  assert.equal(route(u("/start 123456"), undefined, undefined).kind, "ignore");
+  assert.equal(route(u("/start 123456", 7), 42, "123456").kind, "ignore");
 });

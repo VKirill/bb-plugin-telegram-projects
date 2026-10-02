@@ -128,7 +128,7 @@ export const BOT_COMMANDS: BotCommand[] = [
     en: "Send text as is",
     hintRu: "Передаёт агенту текст, даже если он начинается с /.",
     hintEn: "Sends text to the agent even if it starts with /.",
-    args: "<текст>",
+    args: "<text>",
   },
 ];
 export const menuCommands = (language: "ru" | "en") =>

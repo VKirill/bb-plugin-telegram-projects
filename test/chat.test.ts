@@ -4,7 +4,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ChatBridge, inputSchema, splitText, type ChatInput } from "../chat";
-import { OWNER_ID, TelegramFailure, type Store } from "../model";
+import { TelegramFailure, type Store } from "../model";
+const OWNER_ID = 259034221;
 function fixture() {
   const data = new Map<string, any>();
   const calls: any[] = [];
@@ -116,6 +117,7 @@ function fixture() {
       return { message_id: ++message } as any;
     },
     spool: dir,
+    owner: () => OWNER_ID,
     baseUrl: "https://bb.example",
     signal: new AbortController().signal,
     rich: () => false,

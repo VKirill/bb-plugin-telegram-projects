@@ -269,6 +269,10 @@ function Toggle(props: {
 
 function problem(code: string, t: T) {
   const known: Record<string, string> = {
+    owner_not_paired: t(
+      "Бот ещё не привязан к вашему Telegram: откройте вкладку «Подключение».",
+      "The bot is not linked to your Telegram yet: open the Connection tab.",
+    ),
     tasks_cli_unavailable: t(
       "Плагин Tasks выключен или недоступен: события задач не приходят. Отчёты агентов работают.",
       "The Tasks plugin is disabled or unavailable: task events are not delivered. Agent reports still work.",
@@ -935,7 +939,7 @@ function ConnectionTab(props: {
         }
       >
         <p>
-          {t("Личный бот", "Personal bot")}: @{props.data?.bot ?? "aivech_bot"}
+          {t("Бот", "Bot")}: {props.data?.bot ? "@" + props.data.bot : "—"}
         </p>
         <label className="block font-medium">
           {t("Заменить токен", "Replace token")}
@@ -1059,6 +1063,7 @@ function ConnectionTab(props: {
           </div>
         </details>
       </Section>
+      <Owner t={t} rpc={rpc} busy={props.busy} action={props.action} />
       <Section title={t("Ссылки в сообщениях", "Links in messages")}>
         <label className="block font-medium">
           {t("Публичный адрес BB", "Public BB URL")}
@@ -1078,6 +1083,115 @@ function ConnectionTab(props: {
         </button>
       </Section>
     </>
+  );
+}
+
+// Only the person who sends the page's one-time code to the bot can use it.
+function Owner(props: {
+  t: T;
+  rpc: Rpc;
+  busy: boolean;
+  action: (fn: () => Promise<void>) => Promise<void>;
+}) {
+  const { t, rpc } = props;
+  const [pair, setPair] = useState<{
+    owner: number | null;
+    code: string | null;
+    link: string | null;
+  } | null>(null);
+  const load = () =>
+    rpc
+      .call("pairing", null)
+      .then(setPair)
+      .catch(() => {});
+  useEffect(() => {
+    void load();
+    const timer = setInterval(() => void load(), 3000);
+    return () => clearInterval(timer);
+  }, []);
+  if (!pair) return null;
+  return (
+    <Section
+      title={t("Владелец", "Owner")}
+      aside={
+        <span
+          className={
+            "tg-pill " + (pair.owner ? "tg-pill-success" : "tg-pill-danger")
+          }
+        >
+          {pair.owner
+            ? t("привязан", "linked")
+            : t("не привязан", "not linked")}
+        </span>
+      }
+    >
+      {pair.owner ? (
+        <>
+          <p>
+            {t(
+              "Бот отвечает только этому аккаунту Telegram",
+              "The bot answers only this Telegram account",
+            )}
+            : <code>{pair.owner}</code>
+          </p>
+          <button
+            className="tg-btn"
+            disabled={props.busy}
+            onClick={() =>
+              void props.action(async () => {
+                await rpc.call("unpair", null);
+                await load();
+              })
+            }
+          >
+            {t("Отвязать", "Unlink")}
+          </button>
+        </>
+      ) : (
+        <ol className="list-decimal pl-5 space-y-1 text-sm">
+          <li>
+            {t(
+              "Сохраните токен бота выше и включите «Синхронизацию проектов» на вкладке «Общие».",
+              "Save the bot token above and turn on Project sync on the General tab.",
+            )}
+          </li>
+          <li>
+            {pair.link ? (
+              <>
+                {t(
+                  "Откройте ссылку и нажмите Start",
+                  "Open the link and press Start",
+                )}
+                :{" "}
+                <a
+                  className="underline"
+                  href={pair.link}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  {pair.link}
+                </a>
+              </>
+            ) : (
+              t(
+                "Откройте личный чат с ботом.",
+                "Open a private chat with the bot.",
+              )
+            )}
+          </li>
+          <li>
+            {t("Или отправьте боту команду", "Or send the bot")}{" "}
+            <code className="tg-pill tg-pill-neutral">/start {pair.code}</code>
+          </li>
+          <li>
+            {t(
+              "Бот ответит «Бот привязан к BB», и эта страница обновится сама.",
+              "The bot replies that it is linked to BB, and this page updates by itself.",
+            )}
+          </li>
+        </ol>
+      )}
+    </Section>
   );
 }
 
@@ -1199,6 +1313,56 @@ function GeneralTab(props: {
           onChange={(v) => setForm({ ...form, richReplies: v })}
         />
       </div>
+      <label className="block font-medium">
+        {t("Часовой пояс", "Time zone")}
+        <input
+          className="tg-input block w-full mt-2"
+          value={form.timeZone}
+          placeholder={t(
+            "Например, Europe/Moscow. Пусто — часовой пояс сервера BB",
+            "For example, Europe/London. Empty uses the BB server's zone",
+          )}
+          onChange={(e) =>
+            setForm({ ...form, timeZone: e.target.value.trim() })
+          }
+        />
+      </label>
+      <details className="tg-inner">
+        <summary className="cursor-pointer font-medium">
+          {t("Дополнительно", "Advanced")}
+        </summary>
+        <div className="mt-3 space-y-3">
+          <Toggle
+            title={t("Тема SMS", "SMS topic")}
+            hint={t(
+              "Отдельная тема для сервиса-компаньона, который пересылает SMS. Без компаньона не нужна.",
+              "A separate topic for a companion service that forwards SMS. Not needed without one.",
+            )}
+            checked={form.smsTopic}
+            onChange={(v) => setForm({ ...form, smsTopic: v })}
+          />
+          <label className="block font-medium">
+            {t("Папка компаньона на сервере", "Companion folder on the server")}
+            <input
+              className="tg-input block w-full mt-2"
+              value={form.companionDir}
+              placeholder={t(
+                "Пусто — компаньон не используется",
+                "Empty: no companion service",
+              )}
+              onChange={(e) =>
+                setForm({ ...form, companionDir: e.target.value.trim() })
+              }
+            />
+            <span className="block text-sm text-muted-foreground mt-1">
+              {t(
+                "Плагин пишет туда список тем для компаньона и читает его входящие сообщения.",
+                "The plugin writes its topic list there and reads the companion's incoming messages.",
+              )}
+            </span>
+          </label>
+        </div>
+      </details>
       <button
         className="tg-btn tg-accent"
         disabled={props.busy}

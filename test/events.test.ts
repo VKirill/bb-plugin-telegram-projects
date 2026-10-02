@@ -130,3 +130,9 @@ test("summary card shows the summary openly and names the model; the prompt forb
   assert.match(prompt, /Не используй инструменты/);
   assert.ok(prompt.length < 12500);
 });
+test("an unknown time zone falls back to the server zone instead of throwing", async () => {
+  const { safeTimeZone } = await import("../events");
+  assert.equal(safeTimeZone("Europe/Madrid"), "Europe/Madrid");
+  assert.equal(safeTimeZone("Mars/Base"), "");
+  assert.equal(safeTimeZone(""), "");
+});

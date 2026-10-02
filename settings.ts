@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { BOT_ID } from "./model";
 export const preferencesSchema = z
   .object({
     language: z.enum(["ru", "en"]),
@@ -13,6 +12,9 @@ export const preferencesSchema = z
     summaryModel: z.string().max(250),
     summaryReasoning: z.string().max(40),
     summaryServiceTier: z.string().max(40),
+    timeZone: z.string().max(64),
+    smsTopic: z.boolean(),
+    companionDir: z.string().max(500),
     appUrl: z
       .string()
       .url()
@@ -32,6 +34,7 @@ export type Diagnosis = z.infer<typeof diagnosisSchema>;
 export async function diagnose(
   token: string,
   request: typeof fetch = fetch,
+  expectedBot?: number,
 ): Promise<Diagnosis> {
   const d: Diagnosis = {
     valid: false,
@@ -60,7 +63,7 @@ export async function diagnose(
   try {
     const me = await call("getMe");
     d.valid = true;
-    d.sameBot = me.id === BOT_ID;
+    d.sameBot = !expectedBot || me.id === expectedBot;
     d.username = String(me.username ?? "");
     d.topics = me.has_topics_enabled === true;
     d.userTopics = me.allows_users_to_create_topics === true;

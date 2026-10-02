@@ -1,7 +1,5 @@
-import { translate, type Language } from "./companion/aivech/src/locale";
+import { translate, type Language } from "./locale";
 import { z } from "zod";
-export const OWNER_ID = 259034221;
-export const BOT_ID = 8461763634;
 export const taskSchema = z.object({
   id: z.string(),
   projectId: z.string(),
@@ -91,26 +89,35 @@ export function changes(prev: Task | undefined, next: Task): string[] {
   if (prev.dueDate !== next.dueDate) out.push("due");
   return out;
 }
-export function formatEvent(e: Event, language: Language = "ru") {
+/** timeZone: an IANA zone such as Europe/Madrid; empty means the server's zone. */
+export function formatEvent(
+  e: Event,
+  language: Language = "ru",
+  timeZone = "",
+) {
   const tr = (s: string) => translate(language, s);
   const heading =
-    e.kind === "agency_question" ? "❓ Агентство: нужен ответ" : e.kind === "agency_notice" ? "Агентство · уведомление" : e.kind === "test"
-      ? tr("🧪 Проверка уведомлений")
-      : e.kind === "worker_error"
-        ? tr("🔴 Ошибка исполнителя")
-        : e.kind === "created"
-          ? tr("🆕 Новая задача")
-          : e.kind === "started"
-            ? tr("▶️ Исполнитель начал работу")
-            : e.kind === "due"
-              ? tr("📅 Изменён срок")
-              : e.status === "in_review"
-                ? tr("👀 Нужна проверка")
-                : e.status === "done"
-                  ? tr("✅ Задача завершена")
-                  : e.status === "canceled"
-                    ? tr("⏹ Задача отменена")
-                    : tr("🔄 Статус задачи");
+    e.kind === "agency_question"
+      ? tr("❓ Агентство: нужен ответ")
+      : e.kind === "agency_notice"
+        ? tr("Агентство · уведомление")
+        : e.kind === "test"
+          ? tr("🧪 Проверка уведомлений")
+          : e.kind === "worker_error"
+            ? tr("🔴 Ошибка исполнителя")
+            : e.kind === "created"
+              ? tr("🆕 Новая задача")
+              : e.kind === "started"
+                ? tr("▶️ Исполнитель начал работу")
+                : e.kind === "due"
+                  ? tr("📅 Изменён срок")
+                  : e.status === "in_review"
+                    ? tr("👀 Нужна проверка")
+                    : e.status === "done"
+                      ? tr("✅ Задача завершена")
+                      : e.status === "canceled"
+                        ? tr("⏹ Задача отменена")
+                        : tr("🔄 Статус задачи");
   return (
     "<b>" +
     String(heading) +
@@ -134,11 +141,11 @@ export function formatEvent(e: Event, language: Language = "ru") {
     String(
       escapeHtml(
         new Date(e.at).toLocaleString(language === "en" ? "en-GB" : "ru-RU", {
-          timeZone: "Europe/Madrid",
+          ...(timeZone ? { timeZone } : {}),
         }),
       ),
     ) +
-    tr(" · Мадрид</i>")
+    "</i>"
   );
 }
 export function ingest(
