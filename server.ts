@@ -37,15 +37,14 @@ import {
   telegram,
   transcribeTelegramVoice,
   checkBot,
-  runBb,
   readEnvToken,
-  trackersSchema,
-  readTasks,
+  lanePilotReader,
 } from "./adapters";
 import {
   ensureTopic,
   reconcileProjects,
   ingest,
+  dropTasksSnapshots,
   escapeHtml,
   formatEvent,
   TelegramFailure,
@@ -53,7 +52,7 @@ import {
   type Topic,
   type Event,
   type Task,
-  type Tracker,
+  type Project,
 } from "./model";
 const statusSchema = z.object({
   chatEnabled: z.boolean(),
@@ -242,10 +241,10 @@ export default async function plugin(bb: BbPluginApi) {
       label: "Удалять тему и её историю при удалении проекта BB",
       default: true,
     },
-    notifyTasks: { type: "boolean", label: "Уведомления Tasks", default: true },
+    notifyTasks: { type: "boolean", label: "Уведомления Lane Pilot", default: true },
     notifyWorkerErrors: {
       type: "boolean",
-      label: "Ошибки исполнителей, прикреплённых в Tasks",
+      label: "Ошибки исполнителей Lane Pilot (заблокированные задачи)",
       default: true,
     },
     soundOnReview: {
@@ -294,7 +293,20 @@ export default async function plugin(bb: BbPluginApi) {
   let lastSync: string | null = null;
   let wake: (() => void) | undefined;
   let ingressError: string | null = null;
-  let activeTasks: { task: Task; tracker: Tracker }[] = [];
+  let activeTasks: { task: Task; project: Project }[] = [];
+  let laneTasks: { task: Task; project: Project }[] = [];
+  let lanePolledAt = 0;
+  const readLane = lanePilotReader((method, input) =>
+    bb.sdk.plugins.callRpc({
+      pluginId: "lane-pilot",
+      method,
+      input: input as Record<string, string | number | boolean>,
+      outputSchema: z.unknown(),
+    }),
+  );
+  // A failed read is told apart from a broken answer: the first means the plugin is off.
+  const laneUnavailable = (e: unknown) =>
+    e instanceof z.ZodError ? "lane_pilot_bad_answer" : "lane_pilot_unavailable";
   let envToken = { name: "", value: "", at: 0 };
   // A manually saved token wins; otherwise the shared Env Catalog entry, re-read every 5 minutes.
   async function tokenSource(): Promise<"manual" | "env" | "none"> {
@@ -409,7 +421,7 @@ export default async function plugin(bb: BbPluginApi) {
         threadId: x.value.threadId,
         creating: x.value.creating,
       })),
-      tasks: store.list("task:").length,
+      tasks: store.list("lptask:").length,
     };
   }
   async function run() {
@@ -450,76 +462,32 @@ export default async function plugin(bb: BbPluginApi) {
     const projects = (
       await bb.sdk.projects.list({ signal: lifetime.signal })
     ).filter((p) => p.kind === "standard");
-    const cli = (args: string[]) =>
-      runBb(cfg.cliPath, bb.server.loopbackBaseUrl, args, lifetime.signal);
     let taskFailure: string | null = null;
-    const allTasks: { task: Task; tracker: Tracker }[] = [];
+    const allTasks: { task: Task; project: Project }[] = [];
     const ev = await events();
     const folders = await folderState();
     const hidden = new Set(cfg.hideWithFolders ? folders.hidden : []);
     const visible = projects.filter((p) => !hidden.has("p:" + p.id));
+    if (!store.get("lpMigrated")) {
+      dropTasksSnapshots(store);
+      store.put("lpMigrated", true);
+    }
     if (taskKindsOn(ev)) {
       try {
-        const trackers = trackersSchema.parse(
-          await cli(["tasks", "project", "list", "--json"]),
-        ).projects;
-        for (const tracker of trackers) {
-          if (
-            !tracker.linkedBbProjectId ||
-            !projects.some((p) => p.id === tracker.linkedBbProjectId)
-          )
-            continue;
-          const tasks = await readTasks(cli, tracker.id);
-          ingest(store, tracker, tasks);
-          allTasks.push(...tasks.map((task) => ({ task, tracker })));
-          if (ev.worker_error.on) {
-            for (const task of tasks.filter(
-              (t) => !["done", "canceled"].includes(t.status),
-            )) {
-              const result = z
-                .object({
-                  taskThreads: z.array(
-                    z.object({
-                      threadId: z.string(),
-                      liveStatus: z.string().nullable(),
-                      updatedAt: z.string(),
-                    }),
-                  ),
-                })
-                .parse(await cli(["tasks", "threads", task.id, "--json"]));
-              for (const worker of result.taskThreads) {
-                const key = "worker:" + worker.threadId;
-                const prev = store.get<{ liveStatus: string | null }>(key);
-                if (
-                  (prev
-                    ? prev.liveStatus !== worker.liveStatus
-                    : Date.parse(worker.updatedAt) >=
-                      (store.get<number>("trackingSince") ?? Infinity)) &&
-                  worker.liveStatus === "error"
-                ) {
-                  const event: Event = {
-                    id: `${task.id}:${worker.threadId}:${worker.updatedAt}:error`,
-                    projectId: tracker.linkedBbProjectId,
-                    taskId: task.id,
-                    key: task.key,
-                    title: task.title,
-                    tracker: tracker.name,
-                    status: task.status,
-                    kind: "worker_error",
-                    dueDate: task.dueDate,
-                    at: new Date().toISOString(),
-                    urgent: true,
-                  };
-                  if (!store.get("sent:" + event.id))
-                    store.put("queue:" + event.id, event);
-                }
-                store.put(key, { liveStatus: worker.liveStatus });
-              }
-            }
+        // Lane Pilot is read at most every 15 seconds, however often thread events wake the sync.
+        if (Date.now() - lanePolledAt >= 15_000) {
+          lanePolledAt = Date.now();
+          laneTasks = [];
+          for (const project of visible) {
+            const tasks = await readLane(project.id);
+            ingest(store, project, tasks);
+            laneTasks.push(...tasks.map((task) => ({ task, project })));
           }
         }
+        allTasks.push(...laneTasks);
       } catch (e) {
-        taskFailure = safeError(e);
+        lanePolledAt = 0;
+        taskFailure = laneUnavailable(e);
       }
     }
     activeTasks = allTasks;
@@ -573,7 +541,7 @@ export default async function plugin(bb: BbPluginApi) {
           ? tr("<b>🧭 Рабочее пространство BB</b>\n\n") +
             visible.map((p) => "📂 " + escapeHtml(p.name)).join("\n") +
             tr(
-              "\n\nВ темах проектов — чаты BB, отчёты агентов и уведомления Tasks.",
+              "\n\nВ темах проектов — чаты BB, отчёты агентов и уведомления Lane Pilot.",
             ) +
             (store.get<Topic>("topic:sms")?.threadId
               ? tr("\n📱 SMS — коды и сообщения на телефон.")
@@ -868,7 +836,6 @@ export default async function plugin(bb: BbPluginApi) {
           tracker: "",
           status: t.status,
           kind,
-          dueDate: null,
           at: new Date().toISOString(),
           urgent: outcome !== "done",
           thread: {
@@ -895,7 +862,7 @@ export default async function plugin(bb: BbPluginApi) {
   // Only for a companion service that reads topics from a file (for example SMS delivery).
   async function publishProjection(
     dir: string,
-    items: { task: Task; tracker: Tracker }[],
+    items: { task: Task; project: Project }[],
   ) {
     if (!dir) return;
     const data = {
@@ -914,12 +881,12 @@ export default async function plugin(bb: BbPluginApi) {
           .map((b) => ({ topicId: b.topicId, projectId: b.projectId })) ?? [],
       tasks: items
         .filter((x) => !["done", "canceled"].includes(x.task.status))
-        .map(({ task, tracker }) => ({
-          key: task.key,
+        .map(({ task, project }) => ({
+          key: task.id,
           title: task.title,
           status: task.status,
-          projectId: tracker.linkedBbProjectId,
-          tracker: tracker.name,
+          projectId: project.id,
+          tracker: project.name,
         }))
         .slice(0, 500),
     };
@@ -1055,7 +1022,7 @@ export default async function plugin(bb: BbPluginApi) {
   });
   bb.cli.register({
     name: "telegram-projects",
-    summary: "BB project topics, chats and Tasks notifications in Telegram",
+    summary: "BB project topics, chats and Lane Pilot task notifications in Telegram",
     commands: [
       {
         name: "chat-forget",
@@ -1143,12 +1110,11 @@ export default async function plugin(bb: BbPluginApi) {
           key: "TEST",
           title: translate(
             cfg.language as "ru" | "en",
-            "Уведомления Tasks будут приходить в тему своего проекта. Это проверка доставки, не настоящая задача.",
+            "Уведомления Lane Pilot будут приходить в тему своего проекта. Это проверка доставки, не настоящая задача.",
           ),
           tracker: translate(cfg.language as "ru" | "en", "Проверка настройки"),
           status: "todo",
           kind: "test",
-          dueDate: null,
           at: new Date().toISOString(),
           urgent: false,
         };
@@ -1359,15 +1325,14 @@ export default async function plugin(bb: BbPluginApi) {
       ? store.get<Topic>("topic:" + projectId)
       : undefined;
     const names: Record<string, string> = {
-      backlog: tr("в планах"),
       todo: tr("к выполнению"),
       in_progress: tr("в работе"),
-      in_review: tr("нужна проверка"),
+      blocked: tr("заблокирована"),
     };
     const list = activeTasks.filter(
       (x) =>
         !["done", "canceled"].includes(x.task.status) &&
-        (!project || x.tracker.linkedBbProjectId === project.key),
+        (!project || x.project.id === project.key),
     );
     return (
       "📋 " +
@@ -1377,8 +1342,8 @@ export default async function plugin(bb: BbPluginApi) {
         ? list
             .slice(0, 12)
             .map(
-              ({ task, tracker }) =>
-                `${task.key} · ${tracker.name}\n${task.title.slice(0, 140)}\n${names[task.status] ?? task.status}`,
+              ({ task, project }) =>
+                `${task.id} · ${project.name}\n${task.title.slice(0, 140)}\n${names[task.status] ?? task.status}`,
             )
             .join("\n\n")
         : tr("Активных задач нет.")) +

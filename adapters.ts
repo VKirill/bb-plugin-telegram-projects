@@ -3,8 +3,8 @@ import { promisify } from "node:util";
 import { z } from "zod";
 import {
   TelegramFailure,
-  taskSchema,
   type Task,
+  type TaskStatus,
   type Telegram,
 } from "./model";
 const exec = promisify(execFile);
@@ -97,68 +97,80 @@ export async function checkBot(tg: Telegram, expected?: number) {
     topics: me.has_topics_enabled === true,
   };
 }
-export async function runBb(
-  binary: string,
-  baseUrl: string,
-  args: string[],
-  signal: AbortSignal,
-): Promise<unknown> {
-  try {
-    const env: NodeJS.ProcessEnv = { ...process.env, BB_SERVER_URL: baseUrl };
-    delete env.BB_PROJECT_ID;
-    delete env.BB_THREAD_ID;
-    delete env.BB_ENVIRONMENT_ID;
-    const r = await exec(binary, args, {
-      env,
-      timeout: 30_000,
-      maxBuffer: 16 * 1024 * 1024,
-      signal,
-    });
-    return JSON.parse(r.stdout);
-  } catch {
-    throw new Error("tasks_cli_unavailable");
-  }
-}
-export const trackersSchema = z.object({
-  projects: z.array(
-    z.object({
-      id: z.string(),
-      name: z.string(),
-      linkedBbProjectId: z.string().nullable(),
-    }),
+export type LaneRpc = (method: string, input: unknown) => Promise<unknown>;
+const runsPageSchema = z.object({
+  runs: z.array(
+    z
+      .object({
+        id: z.string(),
+        state: z.string(),
+        updated_at: z.number(),
+        attempts: z.array(
+          z
+            .object({
+              id: z.string(),
+              state: z.string(),
+              attempt_no: z.number(),
+              task_id: z.string(),
+              reason: z.string().nullable(),
+            })
+            .passthrough(),
+        ),
+      })
+      .passthrough(),
   ),
 });
-export async function readTasks(
-  run: (args: string[]) => Promise<unknown>,
-  id: string,
-): Promise<Task[]> {
-  const tasks: Task[] = [];
-  let cursor: string | null = null;
-  const seen = new Set<string>();
-  do {
-    const page = z
-      .object({ tasks: z.array(taskSchema), nextCursor: z.string().nullable() })
-      .parse(
-        await run([
-          "tasks",
-          "list",
-          "--project",
+const runCardSchema = z
+  .object({ tasks: z.array(z.object({ id: z.string(), title: z.string() }).passthrough()) })
+  .passthrough()
+  .nullable();
+// An attempt that is still working or being retried counts as in progress; only "queued" is waiting.
+export function statusOf(attemptState: string): TaskStatus {
+  if (attemptState === "accepted") return "done";
+  if (attemptState === "canceled") return "canceled";
+  if (attemptState === "blocked") return "blocked";
+  return attemptState === "queued" ? "todo" : "in_progress";
+}
+/**
+ * Reads a project's Lane Pilot tasks over the plugin RPC: `list_runs` for the newest and every open run
+ * (task = its latest attempt), `get_run_card` for task titles, which never change and are cached.
+ */
+export function lanePilotReader(rpc: LaneRpc, pageSize = 10, now = () => Date.now()) {
+  const titles = new Map<string, string>();
+  return async function read(projectId: string): Promise<Task[]> {
+    const { runs } = runsPageSchema.parse(
+      await rpc("list_runs", { projectId, offset: 0, limit: pageSize, pinOpen: true }),
+    );
+    const tasks: Task[] = [];
+    for (const run of runs) {
+      const latest = new Map<string, (typeof run.attempts)[number]>();
+      for (const a of run.attempts) {
+        const seen = latest.get(a.task_id);
+        if (!seen || a.attempt_no >= seen.attempt_no) latest.set(a.task_id, a);
+      }
+      // A finished run cannot gain titles it did not need an hour ago.
+      const live = !["closed", "accepted"].includes(run.state) || run.updated_at > now() - 3_600_000;
+      if (live && [...latest.keys()].some((id) => !titles.has(run.id + ":" + id)))
+        try {
+          const card = runCardSchema.parse(await rpc("get_run_card", { runId: run.id }));
+          for (const t of card?.tasks ?? []) titles.set(run.id + ":" + t.id, t.title);
+        } catch {
+          // Without a card the task id is the title.
+        }
+      for (const [id, a] of latest)
+        tasks.push({
           id,
-          "--limit",
-          "500",
-          "--json",
-          ...(cursor ? ["--cursor", cursor] : []),
-        ]),
-      );
-    tasks.push(...page.tasks);
-    cursor = page.nextCursor;
-    if (cursor) {
-      if (seen.has(cursor) || tasks.length > 50_000)
-        throw new Error("tasks_pagination_invalid");
-      seen.add(cursor);
+          runId: run.id,
+          title: titles.get(run.id + ":" + id) ?? id,
+          status: statusOf(a.state),
+          attemptId: a.id,
+          reason: a.state === "blocked" ? (a.reason ?? "").slice(0, 300) || null : null,
+          runUpdatedAt: run.updated_at,
+        });
     }
-  } while (cursor);
-  return tasks;
+    if (titles.size > 5000) titles.clear();
+    return tasks;
+  };
 }
 
 export async function transcribeTelegramVoice(

@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-telegram-projects",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "type": "module",
   "engines": {
     "bb": ">=0.43",
@@ -8,7 +8,7 @@
   },
   "bb": {
     "name": "Telegram Projects",
-    "description": "BB projects as Telegram topics: agent reports and summaries, Tasks events, and chat with BB threads by text or voice.",
+    "description": "BB projects as Telegram topics: agent reports and summaries, Lane Pilot task events, and chat with BB threads by text or voice.",
     "branding": {
       "icon": "MessageSquare"
     },
@@ -46,7 +46,7 @@
     "typescript": "^5.7.0",
     "vaul": "^1.1.2"
   },
-  "description": "Work with BB agents from Telegram: per-project topics, agent reports and summaries, Tasks events, and chat with any BB thread by text or voice.",
+  "description": "Work with BB agents from Telegram: per-project topics, agent reports and summaries, Lane Pilot task events, and chat with any BB thread by text or voice.",
   "keywords": [
     "bb",
     "bb-plugin",

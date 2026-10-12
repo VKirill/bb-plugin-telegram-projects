@@ -20,11 +20,11 @@ test("a finished turn, a stop, an error and a pending question are told apart", 
   assert.equal(classifyThread(["turn/completed"], "idle", 1), "attention");
   assert.equal(classifyThread(["item/started"], "active", 0), null);
 });
-test("task events map to their rule; done and review are separate from other statuses", () => {
+test("task events map to their rule; done is separate from other statuses", () => {
   assert.equal(eventKind({ kind: "status", status: "done" }), "task_done");
-  assert.equal(eventKind({ kind: "status", status: "in_review" }), "task_review");
   assert.equal(eventKind({ kind: "status", status: "canceled" }), "task_status");
   assert.equal(eventKind({ kind: "created", status: "todo" }), "task_created");
+  assert.equal(eventKind({ kind: "worker_error", status: "blocked" }), "worker_error");
   assert.equal(eventKind({ kind: "thread_done", status: "idle" }), "thread_done");
   assert.equal(eventKind({ kind: "agency_notice", status: "" }), null);
 });
@@ -41,9 +41,9 @@ test("former flags seed the first configuration; broken rules fall back one by o
   assert.equal(taskKindsOn(ev), false);
   assert.equal(ev.thread_done.on, true);
   assert.equal(ev.thread_attention.sound, false);
-  const mixed = readEvents({ task_done: { on: false, sound: false, projects: null }, task_due: "x" });
+  const mixed = readEvents({ task_done: { on: false, sound: false, projects: null }, worker_error: "x" });
   assert.equal(mixed.task_done.on, false);
-  assert.equal(mixed.task_due.on, true);
+  assert.equal(mixed.worker_error.on, true);
 });
 test("thread card is signed with project, section, thread and agent and escapes HTML", () => {
   const text = formatThreadCard(

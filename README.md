@@ -4,7 +4,7 @@
 [![Plugin SDK](https://img.shields.io/badge/Plugin%20SDK-%3E%3D0.4.87-green.svg)](https://getbb.app)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Work with your BB agents from Telegram. Every BB project gets its own topic in a private chat with your bot: agents report there when they finish, stop or need an answer, Tasks events arrive in the same place, and you can talk to any BB thread by text or voice.
+Work with your BB agents from Telegram. Every BB project gets its own topic in a private chat with your bot: agents report there when they finish, stop or need an answer, Lane Pilot task events arrive in the same place, and you can talk to any BB thread by text or voice.
 
 **English** · [Русский](#русский)
 
@@ -14,8 +14,8 @@ Work with your BB agents from Telegram. Every BB project gets its own topic in a
 - **Summaries.** Instead of the full reply, a BB model of your choice can write 3–6 points: what was done, the result, what needs attention. You pick provider, model and reasoning with BB's own model picker.
 - **Connect from the report.** «🔌 Connect here» binds the reported thread to the topic. Your next messages go to that agent, and its answers come back to Telegram.
 - **Chat with BB.** Start a new chat or connect an existing one in any project topic. Voice messages are transcribed by BB's transcription service.
-- **Tasks events.** New tasks, status changes, completion, due dates and worker errors from the BB Tasks plugin.
-- **Event rules.** Turn every agent and Tasks event on or off, with or without sound, for all projects or selected ones.
+- **Task events.** New tasks, started, accepted, canceled and blocked (worker error, with the reason) from the Lane Pilot plugin.
+- **Event rules.** Turn every agent and task event on or off, with or without sound, for all projects or selected ones.
 - **Project Folders aware.** Hiding a project or section in Projects & Sections removes its topic from Telegram.
 - **Russian or English.** The plugin page, the bot menu, topic introductions, cards and bot messages follow the selected language.
 
@@ -42,14 +42,14 @@ Commands work inside a project topic. The bot menu in Telegram is built from the
 | `/stop` | Stop the agent after confirmation |
 | `/disconnect` | Unbind the thread; history stays in BB |
 | `/model`, `/profile`, `/section`, `/server` | Agent, model, CLI profile, folder and machine for a new chat |
-| `/tasks` | Open tasks of the topic's project |
+| `/tasks` | Open Lane Pilot tasks of the topic's project |
 | `/use <thread-id>`, `/say <text>` | Connect a thread by ID; send text that starts with `/` |
 
 ## Requirements and costs
 
 - BB 0.43 or later. The bot polls Telegram from the BB server, so the server needs outbound access to `api.telegram.org`. No webhook and no public port.
 - Your own Telegram bot. Messages of connected chats, agent reports and task titles are sent to Telegram.
-- Optional plugins: **Tasks** for task events, **Projects & Sections** for sections and hiding, **CLI Agents** for native agent profiles, **Env Catalog** for storing the token.
+- Optional plugins: **Lane Pilot** for task events, **Projects & Sections** for sections and hiding, **CLI Agents** for native agent profiles, **Env Catalog** for storing the token.
 - Summaries and voice use the BB providers and transcription service you configured, with their usage costs.
 - Telegram cannot hide a topic in a private bot chat, so hiding a project deletes its topic with its history; showing it again creates a new topic. *Delete topics of deleted projects* works the same way and can be turned off.
 
@@ -78,7 +78,7 @@ npm run build   # bb plugin build
 
 ## Русский
 
-Работайте с агентами BB из Telegram. У каждого проекта BB своя тема в личном чате с вашим ботом: туда приходят отчёты агентов (закончил, остановился, ждёт ответа) и события Tasks, а с любым тредом BB можно переписываться текстом или голосом.
+Работайте с агентами BB из Telegram. У каждого проекта BB своя тема в личном чате с вашим ботом: туда приходят отчёты агентов (закончил, остановился, ждёт ответа) и события задач Lane Pilot, а с любым тредом BB можно переписываться текстом или голосом.
 
 ### Что умеет
 
@@ -86,7 +86,7 @@ npm run build   # bb plugin build
 - **Саммери** вместо полного ответа: выбранная в родном селекторе BB модель пишет 3–6 пунктов.
 - **«🔌 Подключить здесь»** подключает тред из отчёта к теме, дальше переписка идёт с этим агентом.
 - **Чат с BB**: новый чат или подключение к существующему, голос распознаёт BB.
-- **События Tasks** и **правила событий**: каждое событие отдельно, со звуком или без, для всех или выбранных проектов.
+- **События задач Lane Pilot** и **правила событий**: каждое событие отдельно, со звуком или без, для всех или выбранных проектов.
 - **Связь с Projects & Sections**: скрытый проект или раздел убирает свою тему.
 - **Русский или английский**: страница, меню бота, вступления тем, карточки и сообщения бота переключаются вместе.
 
@@ -99,4 +99,4 @@ npm run build   # bb plugin build
 5. Вкладка **Подключение** → «Владелец»: откройте ссылку или отправьте боту `/start <код>`. Дальше бот отвечает только этому аккаунту.
 6. Вкладка **Обзор**: нажмите «Создать темы».
 
-Требования, стоимость и ограничения — в английском разделе выше: свой бот, исходящий доступ сервера BB к Telegram, необязательные плагины Tasks, Projects & Sections, CLI Agents и Env Catalog. В личном чате с ботом Telegram умеет только удалять темы, поэтому скрытие проекта удаляет его тему вместе с историей.
+Требования, стоимость и ограничения — в английском разделе выше: свой бот, исходящий доступ сервера BB к Telegram, необязательные плагины Lane Pilot, Projects & Sections, CLI Agents и Env Catalog. В личном чате с ботом Telegram умеет только удалять темы, поэтому скрытие проекта удаляет его тему вместе с историей.

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.10.0 — 2026-10-12
+
+Task events now come from Lane Pilot instead of the BB Tasks plugin, which is switched off. The plugin reads each visible project's runs over the Lane Pilot RPC (`list_runs`, `get_run_card`), at most every 15 seconds. A task is its latest attempt: new, started, accepted (done), canceled, and blocked, which is the worker error alert with the block reason. Retries do not alert; each event is sent once. The first read of a project is silent, and the old Tasks snapshots are dropped. `/tasks` and the companion projection list open Lane Pilot tasks. The "needs review" and "due date changed" events are removed, since Lane Pilot has neither. The `tasks_cli_unavailable` problem is now `lane_pilot_unavailable`. No `bb` CLI calls remain.
+
+События задач теперь берутся из Lane Pilot, а не из плагина Tasks, который выключается. Плагин читает ходы проектов по RPC Lane Pilot (`list_runs`, `get_run_card`) не чаще раза в 15 секунд. Задача — её последняя попытка: новая, начата, принята, отменена и заблокирована (это сигнал «Ошибка исполнителя» с причиной блокировки). Повторы попыток не шумят, каждое событие уходит один раз. Первое чтение проекта тихое, старые снимки Tasks удаляются. `/tasks` и проекция для companion показывают открытые задачи Lane Pilot. События «Нужна проверка» и «Изменён срок» убраны: в Lane Pilot их нет.
+
 ## 0.9.0 — 2026-10-02
 
 Ready for any BB user. The bot owner is linked with a one-time `/start <code>` from the Connection tab instead of a built-in account; the bot identity is learned from its first token. No personal paths remain: the plugin's own receiver writes incoming messages straight to plugin storage, and the companion folder, SMS topic and time zone are optional settings. The default Env Catalog name is `TELEGRAM_BOT_TOKEN`. Every bot text has an English translation, checked by a test, so English switches the bot menu, topic introductions, cards and messages. README and overview rewritten in English and Russian; MIT license.

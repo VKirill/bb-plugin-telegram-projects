@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   changes,
+  dropTasksSnapshots,
   ingest,
   ensureTopic,
   reconcileProjects,
@@ -11,7 +12,6 @@ import {
   type Task,
   type Topic,
 } from "../model.ts";
-import { readTasks } from "../adapters.ts";
 function memory(): Store {
   const data = new Map<string, unknown>();
   return {
@@ -30,41 +30,87 @@ function memory(): Store {
   };
 }
 const task: Task = {
-  id: "t1",
-  projectId: "tracker",
-  key: "TEST-1",
+  id: "fix-login",
+  runId: "run1",
   title: "Task <script>",
   status: "todo",
-  dueDate: null,
-  updatedAt: "2026-09-12T10:00:00Z",
-  agentsWorking: 0,
+  attemptId: "att1",
+  reason: null,
+  runUpdatedAt: 1000,
 };
-const tracker = {
-  id: "tracker",
-  name: "Research",
-  linkedBbProjectId: "proj_one",
-};
-test("baseline silent; meaningful changes enqueue once in linked project", () => {
+const project = { id: "proj_one", name: "Research" };
+const queued = (s: Store) => s.list<any>("queue:").map((x) => x.value);
+test("baseline silent; each step queues once in its project", () => {
   const s = memory();
-  ingest(s, tracker, [task]);
-  assert.equal(s.list("queue:").length, 0);
-  const next = {
-    ...task,
-    status: "in_review" as const,
-    updatedAt: "2026-09-12T11:00:00Z",
-  };
-  ingest(s, tracker, [next]);
-  ingest(s, tracker, [next]);
-  assert.equal(s.list("queue:").length, 1);
-  assert.equal((s.list("queue:")[0].value as any).projectId, "proj_one");
+  ingest(s, project, [task]);
+  assert.equal(queued(s).length, 0);
+  const running = { ...task, status: "in_progress" as const };
+  ingest(s, project, [running]);
+  ingest(s, project, [running]);
+  assert.deepEqual(queued(s).map((e) => e.kind), ["started"]);
+  assert.equal(queued(s)[0].projectId, "proj_one");
+  assert.equal(queued(s)[0].tracker, "Research");
+  ingest(s, project, [{ ...running, status: "done" }]);
+  assert.deepEqual(queued(s).map((e) => e.kind).sort(), ["started", "status"]);
   assert.deepEqual(changes(task, { ...task, title: "rename" }), []);
+});
+test("a task seen first already finished reports both steps", () => {
   assert.deepEqual(changes(undefined, { ...task, status: "done" }), ["created", "status"]);
   assert.deepEqual(changes(undefined, { ...task, status: "todo" }), ["created"]);
+  assert.deepEqual(changes(undefined, { ...task, status: "in_progress" }), ["created", "started"]);
+  assert.deepEqual(changes(undefined, { ...task, status: "blocked" }), ["created", "worker_error"]);
 });
-test("unlinked tracker never leaks into another project", () => {
+test("blocked is a worker error with the reason, urgent, once per episode", () => {
   const s = memory();
-  ingest(s, { ...tracker, linkedBbProjectId: null }, [task]);
-  assert.equal(s.list("").length, 0);
+  ingest(s, project, [{ ...task, status: "in_progress" }]);
+  const blocked = {
+    ...task,
+    status: "blocked" as const,
+    reason: "needs_human: <add a path>",
+    runUpdatedAt: 2000,
+  };
+  ingest(s, project, [blocked]);
+  ingest(s, project, [blocked]);
+  const [e] = queued(s);
+  assert.equal(queued(s).length, 1);
+  assert.equal(e.kind, "worker_error");
+  assert.equal(e.urgent, true);
+  assert.equal(e.detail, "needs_human: <add a path>");
+  const text = formatEvent(e);
+  assert.match(text, /Ошибка исполнителя/);
+  assert.match(text, /&lt;add a path&gt;/);
+  // A retry that works and then blocks again is a new episode.
+  ingest(s, project, [{ ...blocked, status: "in_progress", attemptId: "att2" }]);
+  ingest(s, project, [{ ...blocked, attemptId: "att2", runUpdatedAt: 3000 }]);
+  assert.equal(queued(s).length, 2);
+});
+test("an event already sent is not queued again", () => {
+  const s = memory();
+  ingest(s, project, [{ ...task, status: "in_progress" }]);
+  ingest(s, project, [{ ...task, status: "done" }]);
+  const [e] = queued(s);
+  s.del("queue:" + e.id);
+  s.put("sent:" + e.id, 1);
+  s.put("lptask:proj_one:run1:fix-login", { ...task, status: "in_progress" });
+  ingest(s, project, [{ ...task, status: "done" }]);
+  assert.equal(queued(s).length, 0);
+});
+test("snapshots of runs that left the page are dropped; other projects stay", () => {
+  const s = memory();
+  ingest(s, project, [task, { ...task, runId: "run0" }]);
+  ingest(s, { id: "proj_two", name: "Two" }, [task]);
+  ingest(s, project, [task]);
+  assert.deepEqual(
+    s.list("lptask:").map((x) => x.key).sort(),
+    ["lptask:proj_one:run1:fix-login", "lptask:proj_two:run1:fix-login"],
+  );
+});
+test("old Tasks plugin snapshots are removed, Lane Pilot ones stay", () => {
+  const s = memory();
+  for (const k of ["task:a", "visible:t", "tracker:t", "baseline:t", "worker:w", "lptask:p:r:t", "sent:x"])
+    s.put(k, 1);
+  dropTasksSnapshots(s);
+  assert.deepEqual(s.list("").map((x) => x.key).sort(), ["lptask:p:r:t", "sent:x"]);
 });
 test("create persists; rename does not recreate; deletion waits", async () => {
   const s = memory();
@@ -129,23 +175,7 @@ test("ambiguous creation never auto-repeats; 429 permits retry", async () => {
   );
   assert.equal(s2.get<Topic>("topic:proj_one")?.creating, false);
 });
-test("pagination reads all pages; repeated cursor fails", async () => {
-  let n = 0;
-  const rows = await readTasks(
-    async () => ({
-      tasks: [{ ...task, id: String(n) }],
-      nextCursor: n++ === 0 ? "next" : null,
-    }),
-    "tracker",
-  );
-  assert.equal(rows.length, 2);
-  await assert.rejects(
-    readTasks(async () => ({ tasks: [task], nextCursor: "same" }), "tracker"),
-    /pagination_invalid/,
-  );
-});
-test("worker stop is not completion; hostile text escaped", () => {
-  assert.deepEqual(changes({ ...task, agentsWorking: 1 }, task), []);
+test("hostile text escaped", () => {
   const text = formatEvent({
     id: "e",
     projectId: "p",
@@ -153,18 +183,11 @@ test("worker stop is not completion; hostile text escaped", () => {
     key: "TEST-1",
     title: "<b>evil</b>",
     tracker: "x & y",
-    status: "in_review",
+    status: "done",
     kind: "status",
-    dueDate: null,
     at: "2026-09-12T10:00:00Z",
     urgent: true,
   });
   assert.match(text, /&lt;b&gt;evil/);
   assert.match(text, /x &amp; y/);
-});
-test("a new tracker created after activation delivers its new tasks", () => {
-  const s = memory();
-  s.put("trackingSince", Date.parse("2026-09-12T09:00:00Z"));
-  ingest(s, tracker, [{ ...task, createdAt: "2026-09-12T10:00:00Z" }]);
-  assert.equal(s.list("queue:").length, 1);
 });

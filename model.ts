@@ -1,30 +1,18 @@
 import { translate, type Language } from "./locale";
-import { z } from "zod";
-export const taskSchema = z.object({
-  id: z.string(),
-  projectId: z.string(),
-  key: z.string(),
-  title: z.string(),
-  status: z.enum([
-    "backlog",
-    "todo",
-    "in_progress",
-    "in_review",
-    "done",
-    "canceled",
-  ]),
-  dueDate: z.string().nullable(),
-  updatedAt: z.string(),
-  createdAt: z.string().optional(),
-  agentsWorking: z.number().optional().default(0),
-});
-export type Task = z.infer<typeof taskSchema>;
-export type Project = { id: string; name: string };
-export type Tracker = {
+/** A Lane Pilot task seen through its latest attempt (the status vocabulary of the old Tasks plugin, plus blocked). */
+export type TaskStatus = "todo" | "in_progress" | "done" | "canceled" | "blocked";
+export type Task = {
   id: string;
-  name: string;
-  linkedBbProjectId: string | null;
+  runId: string;
+  title: string;
+  status: TaskStatus;
+  attemptId: string;
+  /** Why the latest attempt ended blocked; null otherwise. */
+  reason: string | null;
+  /** The run's last change, in ms; names one blocked episode. */
+  runUpdatedAt: number;
 };
+export type Project = { id: string; name: string };
 export type Topic = {
   key: string;
   name: string;
@@ -52,7 +40,8 @@ export type Event = {
   tracker: string;
   status: string;
   kind: string;
-  dueDate: string | null;
+  /** Short extra line: why an attempt ended blocked. */
+  detail?: string;
   at: string;
   urgent: boolean;
 };
@@ -70,24 +59,29 @@ export const escapeHtml = (s: string) =>
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
 export const states: Record<string, string> = {
-  backlog: "В планах",
   todo: "К выполнению",
   in_progress: "В работе",
   in_review: "Нужна проверка",
+  blocked: "Заблокирована",
   done: "Завершено",
   canceled: "Отменено",
 };
 export function changes(prev: Task | undefined, next: Task): string[] {
-  // A task can be created and finished between two polls: report both steps.
+  // A task can appear already finished: report both steps.
+  const step = (): string[] =>
+    next.status === "blocked"
+      ? ["worker_error"]
+      : next.status === "done" || next.status === "canceled"
+        ? ["status"]
+        : [];
   if (!prev)
-    return ["done", "in_review", "canceled"].includes(next.status)
-      ? ["created", "status"]
-      : ["created"];
-  const out: string[] = [];
-  if (prev.status !== next.status) out.push("status");
-  else if (!prev.agentsWorking && next.agentsWorking > 0) out.push("started");
-  if (prev.dueDate !== next.dueDate) out.push("due");
-  return out;
+    return next.status === "in_progress"
+      ? ["created", "started"]
+      : ["created", ...step()];
+  if (prev.status === next.status) return [];
+  return next.status === "in_progress" && prev.status === "todo"
+    ? ["started"]
+    : step();
 }
 /** timeZone: an IANA zone such as Europe/Madrid; empty means the server's zone. */
 export function formatEvent(
@@ -109,15 +103,11 @@ export function formatEvent(
               ? tr("🆕 Новая задача")
               : e.kind === "started"
                 ? tr("▶️ Исполнитель начал работу")
-                : e.kind === "due"
-                  ? tr("📅 Изменён срок")
-                  : e.status === "in_review"
-                    ? tr("👀 Нужна проверка")
-                    : e.status === "done"
-                      ? tr("✅ Задача завершена")
-                      : e.status === "canceled"
-                        ? tr("⏹ Задача отменена")
-                        : tr("🔄 Статус задачи");
+                : e.status === "done"
+                  ? tr("✅ Задача завершена")
+                  : e.status === "canceled"
+                    ? tr("⏹ Задача отменена")
+                    : tr("🔄 Статус задачи");
   return (
     "<b>" +
     String(heading) +
@@ -131,11 +121,7 @@ export function formatEvent(
     String(escapeHtml(tr(states[e.status] ?? e.status))) +
     "" +
     String(
-      e.dueDate
-        ? tr("\nСрок: ") + escapeHtml(e.dueDate)
-        : e.kind === "due"
-          ? tr("\nСрок снят")
-          : "",
+      e.detail ? "\n<code>" + escapeHtml(e.detail.slice(0, 300)) + "</code>" : "",
     ) +
     "\n\n<i>" +
     String(
@@ -148,44 +134,57 @@ export function formatEvent(
     "</i>"
   );
 }
+const taskKey = (projectId: string, t: Pick<Task, "runId" | "id">) =>
+  `lptask:${projectId}:${t.runId}:${t.id}`;
+/** Compare a project's Lane Pilot tasks with the last snapshot and queue what changed. The first read is silent. */
 export function ingest(
   store: Store,
-  tracker: Tracker,
+  project: Project,
   tasks: Task[],
   now = Date.now(),
 ) {
-  if (!tracker.linkedBbProjectId) return;
-  const baseline = store.get<boolean>("baseline:" + tracker.id);
+  const baseline = store.get<boolean>("lpbaseline:" + project.id);
   store.atomic(() => {
+    const seen = new Set<string>();
     for (const task of tasks) {
-      const old = store.get<Task>("task:" + task.id);
-      if (
-        baseline ||
-        (task.createdAt &&
-          Date.parse(task.createdAt) >=
-            (store.get<number>("trackingSince") ?? Infinity))
-      )
+      const key = taskKey(project.id, task);
+      seen.add(key);
+      const old = store.get<Task>(key);
+      if (baseline)
         for (const kind of changes(old, task)) {
           const e: Event = {
-            id: `${task.id}:${task.updatedAt}:${kind}:${task.agentsWorking}`,
-            projectId: tracker.linkedBbProjectId!,
+            id:
+              kind === "worker_error"
+                ? `lp:${task.runId}:${task.id}:${task.attemptId}:${task.runUpdatedAt}:error`
+                : `lp:${task.runId}:${task.id}:${kind === "status" ? task.status : kind}`,
+            projectId: project.id,
             taskId: task.id,
-            key: task.key,
+            key: task.id,
             title: task.title,
-            tracker: tracker.name,
+            tracker: project.name,
             status: task.status,
             kind,
-            dueDate: task.dueDate,
+            ...(kind === "worker_error" && task.reason
+              ? { detail: task.reason }
+              : {}),
             at: new Date(now).toISOString(),
-            urgent: task.status === "in_review",
+            urgent: kind === "worker_error",
           };
           if (!store.get("sent:" + e.id)) store.put("queue:" + e.id, e);
         }
-      store.put("task:" + task.id, task);
+      store.put(key, task);
     }
-    store.put("visible:" + tracker.id, tasks);
-    store.put("tracker:" + tracker.id, tracker);
-    store.put("baseline:" + tracker.id, true);
+    // Runs that left the page Lane Pilot returns are finished history.
+    for (const { key } of store.list("lptask:" + project.id + ":"))
+      if (!seen.has(key)) store.del(key);
+    store.put("lpbaseline:" + project.id, true);
+  });
+}
+/** Snapshot keys the Tasks plugin used; Lane Pilot replaced it. */
+export function dropTasksSnapshots(store: Store) {
+  store.atomic(() => {
+    for (const prefix of ["task:", "visible:", "tracker:", "baseline:", "worker:"])
+      for (const { key } of store.list(prefix)) store.del(key);
   });
 }
 export function topicName(p: Project) {

@@ -3,10 +3,10 @@ export type Language = "ru" | "en";
 export const english: Record<string, string> = {
   "❓ Агентство: нужен ответ": "❓ Agency: answer needed",
   "Агентство · уведомление": "Agency · notice",
-  "Уведомления Tasks будут приходить в тему своего проекта. Это проверка доставки, не настоящая задача.": "Tasks notifications will arrive in their project topic. This is a delivery check, not a real task.",
+  "Уведомления Lane Pilot будут приходить в тему своего проекта. Это проверка доставки, не настоящая задача.": "Lane Pilot notifications will arrive in their project topic. This is a delivery check, not a real task.",
   "Проверка настройки": "Setup check",
   "<b>🧭 Рабочее пространство BB</b>\n\n": "<b>🧭 BB workspace</b>\n\n",
-  "\n\nВ темах проектов — чаты BB, отчёты агентов и уведомления Tasks.": "\n\nProject topics hold BB chats, agent reports and Tasks notifications.",
+  "\n\nВ темах проектов — чаты BB, отчёты агентов и уведомления Lane Pilot.": "\n\nProject topics hold BB chats, agent reports and Lane Pilot notifications.",
   "\n📱 SMS — коды и сообщения на телефон.": "\n📱 SMS — codes and messages sent to your phone.",
   "\n\n/project — привязать новую тему\n/chats — чаты BB\n/model — агент и модель\n/tasks — активные задачи\n/menu — управление": "\n\n/project — bind a new topic\n/chats — BB chats\n/model — agent and model\n/tasks — active tasks\n/menu — controls",
   "</b>\n\nЗдесь появляются события задач и отчёты агентов этого проекта: кто закончил работу, кто ждёт ответа, что остановилось.\n\n/menu — управление чатом BB\n/new — новая сессия\n/chats — подключиться к существующему чату\n/model — агент и модель\n/tasks — задачи проекта\n\nКакие события присылать, настраивается на странице плагина, вкладка «События».": "</b>\n\nTask events and agent reports for this project appear here: who finished, who is waiting for you, what stopped.\n\n/menu — BB chat controls\n/new — new session\n/chats — connect an existing chat\n/model — agent and model\n/tasks — project tasks\n\nChoose which events to send on the plugin page, Events tab.",
@@ -158,6 +158,8 @@ export const english: Record<string, string> = {
   "\n⚠️ Данные давно не обновлялись.":
     "\n⚠️ This data has not been updated recently.",
   "Активные задачи": "Active tasks",
+  "заблокирована": "blocked",
+  "Заблокирована": "Blocked",
   "Активных задач нет.": "No active tasks.",
   "\n\nЕщё ": "\n\nAnother ",
   " — в BB.": " — in BB.",

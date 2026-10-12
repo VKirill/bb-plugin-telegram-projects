@@ -5,9 +5,7 @@ export const EVENT_KINDS = [
   "task_created",
   "task_started",
   "task_status",
-  "task_review",
   "task_done",
-  "task_due",
   "worker_error",
   "thread_done",
   "thread_attention",
@@ -50,9 +48,7 @@ export function defaultEvents(old?: {
     task_created: rule(tasks, false),
     task_started: rule(tasks, false),
     task_status: rule(tasks, false),
-    task_review: rule(tasks, sound),
     task_done: rule(tasks, false),
-    task_due: rule(tasks, false),
     worker_error: rule(tasks && (old?.notifyWorkerErrors ?? true), sound),
     thread_done: rule(true, false),
     thread_attention: rule(true, sound),
@@ -77,13 +73,8 @@ export function eventKind(e: Pick<Event, "kind" | "status">): EventKind | null {
   if (e.kind === "worker_error") return "worker_error";
   if (e.kind === "created") return "task_created";
   if (e.kind === "started") return "task_started";
-  if (e.kind === "due") return "task_due";
   if (e.kind === "status")
-    return e.status === "in_review"
-      ? "task_review"
-      : e.status === "done"
-        ? "task_done"
-        : "task_status";
+    return e.status === "done" ? "task_done" : "task_status";
   return null;
 }
 export function route(events: Events, kind: EventKind, projectId: string) {

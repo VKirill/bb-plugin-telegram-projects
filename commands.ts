@@ -109,8 +109,8 @@ export const BOT_COMMANDS: BotCommand[] = [
     group: "tasks",
     ru: "Активные задачи",
     en: "Active tasks",
-    hintRu: "Открытые задачи Tasks проекта этой темы.",
-    hintEn: "Open Tasks items of this topic's project.",
+    hintRu: "Открытые задачи Lane Pilot проекта этой темы.",
+    hintEn: "Open Lane Pilot tasks of this topic's project.",
   },
   {
     command: "use",

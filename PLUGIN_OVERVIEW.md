@@ -8,7 +8,7 @@ Under every report, **Connect here** binds that thread to the topic. Your next m
 
 ## Events
 
-The Events tab lists every event the plugin can send: agent finished, agent waiting, thread stopped or failed, and the BB Tasks events (new task, started, needs review, done, status change, due date, worker error). Each one can be switched on or off, play a sound or stay silent, and be limited to selected projects.
+The Events tab lists every event the plugin can send: agent finished, agent waiting, thread stopped or failed, and the Lane Pilot task events (new task, started, done, canceled, worker error when a task is blocked). Each one can be switched on or off, play a sound or stay silent, and be limited to selected projects.
 
 ## Language
 
@@ -25,6 +25,6 @@ Choose Russian or English. The plugin page, the Telegram bot menu, topic introdu
 
 - Your own Telegram bot. The BB server polls Telegram, so it needs outbound access to api.telegram.org; no webhook or public port is used.
 - Messages of connected chats, agent reports and task titles are sent to Telegram.
-- Optional plugins: Tasks for task events, Projects & Sections for sections and hiding, CLI Agents for native agent profiles, Env Catalog for the token.
+- Optional plugins: Lane Pilot for task events, Projects & Sections for sections and hiding, CLI Agents for native agent profiles, Env Catalog for the token.
 - Summaries and voice transcription use the BB providers you configured and their usage costs.
 - Telegram can only delete topics in a private bot chat. Hiding a project in Projects & Sections deletes its topic with its history; showing it again creates a new topic.
