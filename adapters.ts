@@ -105,6 +105,7 @@ const runsPageSchema = z.object({
         id: z.string(),
         state: z.string(),
         updated_at: z.number(),
+        pmThread: z.object({ id: z.string() }).passthrough().nullable().optional(),
         attempts: z.array(
           z
             .object({
@@ -166,10 +167,44 @@ export function lanePilotReader(rpc: LaneRpc, pageSize = 10, now = () => Date.no
           attemptId: a.id,
           reason: a.state === "blocked" ? (a.reason ?? "").slice(0, 300) || null : null,
           runUpdatedAt: run.updated_at,
+          pmThreadId: run.pmThread?.id ?? null,
         });
     }
     if (titles.size > 5000) titles.clear();
     return tasks;
+  };
+}
+
+const phaseListSchema = z.array(
+  z
+    .object({
+      id: z.string(),
+      title: z.string(),
+      stage: z.string(),
+      state: z.string(),
+      pmThreadId: z.string().nullable().optional(),
+      record: z
+        .object({
+          questions: z.array(z.object({ id: z.string(), text: z.string(), blocking: z.boolean().optional(), answer: z.string().optional() }).passthrough()).optional(),
+        })
+        .passthrough()
+        .optional(),
+      next: z.object({ text: z.string(), waitsForPm: z.boolean().optional(), key: z.string().optional() }).passthrough().optional(),
+    })
+    .passthrough(),
+);
+/** A phase as the bridge keeps it: its stage and state, its open questions, and the turn that waits for the owner's word. */
+export type PhaseSnap = { id: string; title: string; stage: string; state: string; pmThreadId: string | null; next: string; word: string | null; questions: Array<{ id: string; text: string }> };
+/** Reads a project's Lane Pilot phases over the plugin RPC (`phase_list`). */
+export function lanePhaseReader(rpc: LaneRpc) {
+  return async function read(projectId: string): Promise<PhaseSnap[]> {
+    const phases = phaseListSchema.parse(await rpc("phase_list", { projectId }));
+    return phases.map((phase) => ({
+      id: phase.id, title: phase.title, stage: phase.stage, state: phase.state, pmThreadId: phase.pmThreadId ?? null, next: phase.next?.text ?? "",
+      // The turn that waits for the owner's word: the driver's instruction key ends with :word:<turn>[:<wave>].
+      word: phase.next?.key?.match(/:word:([a-z]+(?::\d+)?)$/)?.[1] ?? null,
+      questions: (phase.record?.questions ?? []).filter((q) => !q.answer).map((q) => ({ id: q.id, text: q.text })),
+    }));
   };
 }
 

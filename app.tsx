@@ -545,6 +545,28 @@ const GROUPS: {
       ],
     ],
   },
+  {
+    ru: "Фазы",
+    en: "Phases",
+    kinds: [
+      [
+        "phase_question",
+        "Фаза спрашивает",
+        "Phase asks",
+        "Вопрос стадии. Ответ на сообщение уходит фазе.",
+        "A stage question. A reply to the message goes to the phase.",
+      ],
+      [
+        "phase_word",
+        "Фаза ждёт вашего слова",
+        "Phase waits for your word",
+        "Кнопки «Да» и «Нет»; после «Нет» — ответ с причиной.",
+        "Yes and No buttons; after No, a reply with the reason.",
+      ],
+      ["phase_stage", "Фаза перешла на стадию", "Phase moved to a stage", "", ""],
+      ["phase_closed", "Фаза закрыта", "Phase closed", "", ""],
+    ],
+  },
 ];
 
 // Full agent reply or a summary written by any BB model the user picks.

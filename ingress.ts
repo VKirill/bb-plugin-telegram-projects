@@ -31,7 +31,7 @@ export function routeUpdate(
   // A stranger chat gets one sentence (the server says it once per person), never the conversation.
   if (from.id !== owner) return cq ? { kind: "ignore", callbackId } : { kind: "stranger", chatId: m.chat.id };
   const callback: string | undefined = cq?.data;
-  if (callback && !callback.startsWith("bb:"))
+  if (callback && !callback.startsWith("bb:") && !callback.startsWith("ph:"))
     return { kind: "ignore", callbackId };
   const text: string | undefined =
     typeof m.text === "string"

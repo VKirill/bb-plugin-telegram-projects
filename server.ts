@@ -19,7 +19,7 @@ import {
   readEvents,
   route,
   sectionFor,
-  taskKindsOn,
+  laneKindsOn,
   type Events,
 } from "./events";
 import { makeChatControlPublisher, writeJsonAtomic } from "./json-file";
@@ -39,11 +39,13 @@ import {
   checkBot,
   readEnvToken,
   lanePilotReader,
+  lanePhaseReader,
 } from "./adapters";
 import {
   ensureTopic,
   reconcileProjects,
   ingest,
+  ingestPhases,
   staleEvent,
   dropTasksSnapshots,
   escapeHtml,
@@ -312,6 +314,46 @@ export default async function plugin(bb: BbPluginApi) {
       outputSchema: z.unknown(),
     }),
   );
+  const laneRpc = (method: string, input: Record<string, unknown>) =>
+    bb.sdk.plugins.callRpc({ pluginId: "lane-pilot", method, input: input as Record<string, string | number | boolean>, outputSchema: z.unknown() });
+  const readPhases = lanePhaseReader(laneRpc as never);
+  type PhaseLink = { phaseId: string; projectId: string; pmThreadId: string | null; questionId?: string; turn?: string; no?: boolean };
+  /** The owner answers a phase from Telegram: a reply to its question, «да»/«нет» on its word (the «нет» with a reason in a reply). */
+  async function handlePhaseInput(input: { topicId: number; messageId: number; text?: string; callback?: string; replyTo?: number }, language: "ru" | "en"): Promise<void> {
+    const tr = (s: string) => translate(language, s);
+    const tg = telegram(botToken, lifetime.signal, 15_000, ownerId);
+    const say = (text: string) => tg("sendMessage", { message_thread_id: input.topicId || undefined, reply_to_message_id: input.messageId, text }).catch(() => {});
+    try {
+      if (input.callback?.startsWith("ph:")) {
+        const [, verdict, phaseId, ...rest] = input.callback.split(":");
+        const turn = rest.join(":");
+        const link = store.get<PhaseLink>("phlink:" + phaseId);
+        if (verdict === "y") {
+          const [base, wave] = turn.split(":");
+          await laneRpc("phase_control", { phaseId, action: "word", turn: base, decision: "yes", note: "да", ...(wave ? { wave: Number(wave) } : {}) });
+          await say(tr("✅ Записал ваше «да». Фаза идёт дальше."));
+        } else {
+          const prompt = await tg<{ message_id: number }>("sendMessage", { message_thread_id: input.topicId || undefined, text: tr("Напишите ответом на это сообщение, почему «нет» — фаза вернётся с вашими словами.") });
+          store.put("phmsg:" + prompt.message_id, { phaseId, projectId: link?.projectId ?? "", pmThreadId: link?.pmThreadId ?? null, turn, no: true } satisfies PhaseLink);
+        }
+        return;
+      }
+      const link = store.get<PhaseLink>("phmsg:" + input.replyTo);
+      const text = input.text?.trim() ?? "";
+      if (!link || !text) return;
+      if (link.questionId) {
+        await laneRpc("phase_act", { action: "answer", projectId: link.projectId, pmThreadId: link.pmThreadId ?? "telegram", phaseId: link.phaseId, payload: { questionId: link.questionId, answer: text } });
+        await say(tr("✅ Ответ передан фазе."));
+      } else if (link.turn) {
+        const [base, wave] = link.turn.split(":");
+        const yes = !link.no && /^(да|ок|ok|yes|го|давай)[.!]?$/i.test(text);
+        await laneRpc("phase_control", { phaseId: link.phaseId, action: "word", turn: base, decision: yes ? "yes" : "no", note: text, ...(wave ? { wave: Number(wave) } : {}) });
+        await say(yes ? tr("✅ Записал ваше «да». Фаза идёт дальше.") : tr("↩️ Записал «нет» с вашими словами. Фаза вернётся."));
+      }
+    } catch (e) {
+      await say(tr("⚠️ Фаза не приняла ответ: ") + String(e instanceof Error ? e.message : e).slice(0, 300));
+    }
+  }
   // A failed read is told apart from a broken answer: the first means the plugin is off.
   const laneUnavailable = (e: unknown) =>
     e instanceof z.ZodError ? "lane_pilot_bad_answer" : "lane_pilot_unavailable";
@@ -489,7 +531,7 @@ export default async function plugin(bb: BbPluginApi) {
       dropTasksSnapshots(store);
       store.put("lpMigrated", true);
     }
-    if (taskKindsOn(ev)) {
+    if (laneKindsOn(ev)) {
       try {
         // Lane Pilot is read at most every 15 seconds, however often thread events wake the sync.
         if (Date.now() - lanePolledAt >= 15_000) {
@@ -499,6 +541,12 @@ export default async function plugin(bb: BbPluginApi) {
             const tasks = await readLane(project.id);
             ingest(store, project, tasks);
             laneTasks.push(...tasks.map((task) => ({ task, project })));
+            // The phases of the project: stage changes, questions, the owner's word, closings (a missing RPC is an older Lane Pilot).
+            const phases = await readPhases(project.id).catch(() => null);
+            if (phases) {
+              ingestPhases(store, project, phases);
+              for (const phase of phases) store.put("phlink:" + phase.id, { phaseId: phase.id, projectId: project.id, pmThreadId: phase.pmThreadId } satisfies PhaseLink);
+            }
           }
         }
         allTasks.push(...laneTasks);
@@ -630,12 +678,16 @@ export default async function plugin(bb: BbPluginApi) {
       if (agency && e.agencyTopicId !== topic.threadId) continue;
       // Keep deliveries bound to their original topic.
       // Tasks detail route verified through the live Tasks UI.
+      const phaseEvent = e.kind.startsWith("phase_") && e.phase;
       const common = {
         message_thread_id: topic.threadId,
         disable_notification: !decision.sound,
         link_preview_options: { is_disabled: true },
         reply_markup: {
           inline_keyboard: [
+            ...(phaseEvent && e.kind === "phase_word" && e.phase?.turn
+              ? [[{ text: tr("✅ Да"), callback_data: `ph:y:${e.phase.phaseId}:${e.phase.turn}`.slice(0, 64) }, { text: tr("❌ Нет"), callback_data: `ph:n:${e.phase.phaseId}:${e.phase.turn}`.slice(0, 64) }]]
+              : []),
             [
               ...(e.thread && cfg.chatEnabled && bridge
                 ? [bridge.connectButton(topic.threadId, e.thread.threadId)].filter(
@@ -647,7 +699,9 @@ export default async function plugin(bb: BbPluginApi) {
                   ? tr("Открыть в BB")
                   : e.kind === "test"
                     ? tr("Открыть Telegram Projects")
-                    : tr("Открыть ") + String(e.key) + "",
+                    : phaseEvent
+                      ? tr("Открыть пульт")
+                      : tr("Открыть ") + String(e.key) + "",
                 url:
                   base.origin +
                   (e.thread
@@ -659,7 +713,12 @@ export default async function plugin(bb: BbPluginApi) {
                       ? "/plugins/telegram-projects/telegram-projects"
                       : agency
                         ? "/plugins/agency/overview/jobs/" + encodeURIComponent(e.key)
-                        : "/plugins/tasks/tasks/task/" + encodeURIComponent(e.key)),
+                        : phaseEvent
+                          ? "/plugins/lane-pilot/lane-pilot-cockpit/phases"
+                          // A Lane Pilot task lives in its run's PM chat; the Tasks plugin is gone.
+                          : e.pmThreadId
+                            ? "/projects/" + encodeURIComponent(e.projectId) + "/threads/" + encodeURIComponent(e.pmThreadId)
+                            : "/plugins/lane-pilot/lane-pilot"),
               },
             ],
           ],
@@ -688,7 +747,12 @@ export default async function plugin(bb: BbPluginApi) {
             return tg("sendMessage", html);
           throw err;
         });
-      else await tg("sendMessage", html);
+      else {
+        const message = await tg<{ message_id?: number }>("sendMessage", html);
+        // A question or a word the owner answers by replying to this message.
+        if (phaseEvent && message?.message_id && (e.kind === "phase_question" || e.kind === "phase_word"))
+          store.put("phmsg:" + message.message_id, { phaseId: e.phase!.phaseId, projectId: e.projectId, pmThreadId: e.pmThreadId ?? null, ...(e.phase!.questionId ? { questionId: e.phase!.questionId } : {}), ...(e.phase!.turn ? { turn: e.phase!.turn } : {}) } satisfies PhaseLink);
+      }
       sent++;
       store.atomic(() => {
         store.put("sent:" + e.id, Date.now());
@@ -1422,6 +1486,8 @@ export default async function plugin(bb: BbPluginApi) {
               }
             } else if (route.kind === "refuse") {
               await tg("sendMessage", { message_thread_id: route.topicId || undefined, text: translate(cfg.language as "ru" | "en", "Я читаю текст, голосовые, фото и файлы. Напиши словами, что сделать.") }).catch(() => {});
+            } else if (route.kind === "chat" && (route.input.callback?.startsWith("ph:") || (route.input.replyTo && store.get("phmsg:" + route.input.replyTo)))) {
+              await handlePhaseInput(route.input, cfg.language as "ru" | "en");
             } else if (route.kind === "chat" && cfg.chatEnabled && bridge) {
               bridge.accept(route.input);
               chatWake?.();

@@ -11,6 +11,8 @@ export type Task = {
   reason: string | null;
   /** The run's last change, in ms; names one blocked episode. */
   runUpdatedAt: number;
+  /** The run's PM chat: where the task lives in BB. */
+  pmThreadId?: string | null;
 };
 export type Project = { id: string; name: string };
 export type Topic = {
@@ -42,6 +44,10 @@ export type Event = {
   kind: string;
   /** Short extra line: why an attempt ended blocked. */
   detail?: string;
+  /** The PM chat a task or phase event links to. */
+  pmThreadId?: string | null;
+  /** A phase event (kind phase_*): which phase, and the question or the turn a reply answers. */
+  phase?: { phaseId: string; questionId?: string; turn?: string };
   at: string;
   urgent: boolean;
 };
@@ -84,11 +90,25 @@ export function changes(prev: Task | undefined, next: Task): string[] {
     : step();
 }
 /** timeZone: an IANA zone such as Europe/Madrid; empty means the server's zone. */
+const PHASE_STAGES_RU: Record<string, string> = { discussion: "обсуждение", planning: "план", design: "чертёж", execution: "исполнение", verification: "проверка", acceptance: "приёмка", lessons: "уроки", closed: "закрыта" };
+/** A phase event: what happened, the phase, and what it needs (a question to answer, a word to give). */
+export function formatPhaseEvent(e: Event, language: Language = "ru") {
+  const tr = (s: string) => translate(language, s);
+  const stage = language === "en" ? e.status : PHASE_STAGES_RU[e.status] ?? e.status;
+  const head = e.kind === "phase_question" ? tr("❓ Фаза спрашивает")
+    : e.kind === "phase_word" ? tr("✋ Фаза ждёт вашего слова")
+      : e.kind === "phase_closed" ? tr("🏁 Фаза закрыта")
+        : tr("➡️ Фаза перешла на стадию: ") + stage;
+  const ask = e.kind === "phase_question" ? "\n\n" + tr("Ответьте на это сообщение — ответ уйдёт фазе.")
+    : e.kind === "phase_word" ? "\n\n" + tr("«Да» — кнопкой; «нет» — кнопкой и затем ответом с причиной.") : "";
+  return "<b>" + escapeHtml(head) + "</b>\n" + escapeHtml(e.title) + (e.detail ? "\n\n" + escapeHtml(e.detail.slice(0, 600)) : "") + escapeHtml(ask);
+}
 export function formatEvent(
   e: Event,
   language: Language = "ru",
   timeZone = "",
 ) {
+  if (e.kind.startsWith("phase_")) return formatPhaseEvent(e, language);
   const tr = (s: string) => translate(language, s);
   const heading =
     e.kind === "agency_question"
@@ -176,6 +196,7 @@ export function ingest(
               : {}),
             at: new Date(now).toISOString(),
             urgent: kind === "worker_error",
+            pmThreadId: task.pmThreadId ?? null,
           };
           if (!store.get("sent:" + e.id)) store.put("queue:" + e.id, e);
         }
@@ -186,6 +207,34 @@ export function ingest(
       if (!seen.has(key)) store.del(key);
     store.put("lpbaseline:" + project.id, true);
     store.put("lpread:" + project.id, now);
+  });
+}
+/**
+ * Compare a project's phases with their last snapshot and queue what the owner should hear: a stage change, a new question, a turn that
+ * waits for the owner.s word, a closed phase. The first read is silent, and so is one after a long pause (STALE_READ_MS).
+ */
+export function ingestPhases(store: Store, project: Project, phases: import("./adapters").PhaseSnap[], now = Date.now()) {
+  const lastRead = store.get<number>("phread:" + project.id) ?? 0;
+  const baseline = store.get<boolean>("phbaseline:" + project.id) && now - lastRead <= STALE_READ_MS;
+  store.atomic(() => {
+    for (const phase of phases) {
+      const key = "phase:" + project.id + ":" + phase.id;
+      const old = store.get<import("./adapters").PhaseSnap>(key);
+      const queue = (kind: string, id: string, detail: string, extra: Partial<NonNullable<Event["phase"]>> = {}, urgent = false) => {
+        const e: Event = { id: "ph:" + phase.id + ":" + id, projectId: project.id, taskId: phase.id, key: phase.id, title: phase.title, tracker: project.name,
+          status: phase.stage, kind, detail: detail.slice(0, 600), at: new Date(now).toISOString(), urgent, pmThreadId: phase.pmThreadId, phase: { phaseId: phase.id, ...extra } };
+        if (!store.get("sent:" + e.id)) store.put("queue:" + e.id, e);
+      };
+      if (baseline) {
+        if (old && old.stage !== phase.stage && phase.stage !== "closed") queue("phase_stage", "stage:" + phase.stage, phase.next);
+        if (old && old.state !== "closed" && (phase.state === "closed" || phase.stage === "closed")) queue("phase_closed", "closed", phase.next);
+        for (const q of phase.questions) if (!old?.questions.some((seen) => seen.id === q.id)) queue("phase_question", "q:" + q.id, q.text, { questionId: q.id }, true);
+        if (phase.word && phase.word !== old?.word) queue("phase_word", "word:" + phase.word, phase.next, { turn: phase.word }, true);
+      }
+      store.put(key, phase);
+    }
+    store.put("phbaseline:" + project.id, true);
+    store.put("phread:" + project.id, now);
   });
 }
 /** Snapshot keys the Tasks plugin used; Lane Pilot replaced it. */

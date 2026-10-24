@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.12.0 — 2026-10-24
+
+Lane Pilot phases in the project topics. The plugin reads each project's phases (`phase_list`) with its tasks and sends four new events: the phase moved to a stage, the phase asks a question, the phase waits for the owner's word, the phase closed. A reply to a question message goes to the phase as its answer (`phase_act answer`). A word message has «Да» and «Нет» buttons: «Да» gives the word at once, «Нет» asks for a reply with the reason, which goes to the phase with the «no» (`phase_control word`, with the wave of a wave turn). As with tasks, the first read and a read after 30 minutes of silence send nothing. The task button now opens the run's PM chat instead of the removed Tasks plugin; a phase button opens the Lane Pilot cockpit. The Events tab has a «Фазы» group; turning off task notices no longer stops phase events. Needs Lane Pilot 0.1.292 for the word on the issue and wave turns.
+
+Фазы Lane Pilot в темах проектов. Плагин читает фазы проекта вместе с задачами и шлёт четыре новых события: фаза перешла на стадию, фаза спрашивает, фаза ждёт вашего слова, фаза закрыта. Ответ на сообщение с вопросом уходит фазе как ответ. У сообщения о слове кнопки «Да» и «Нет»: «Да» сразу даёт слово, «Нет» просит ответить с причиной, и причина уходит фазе вместе с «нет». Как и у задач, первое чтение и чтение после 30 минут тишины ничего не шлют. Кнопка задачи теперь открывает чат PM её хода, а не удалённый плагин Tasks; кнопка фазы открывает пульт Lane Pilot. На вкладке «События» новая группа «Фазы».
+
 ## 0.11.1 — 2026-10-24
 
 No late task notices after a pause. A read of a project more than 30 minutes after the last one is a silent new baseline: the changes that happened while the plugin was off are history, not news (on re-enabling after three days the plugin queued 928 old task events). A task event that waited in the queue more than 6 hours is dropped, never sent late.

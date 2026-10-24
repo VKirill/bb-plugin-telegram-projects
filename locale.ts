@@ -1,6 +1,20 @@
 // Telegram texts are written in Russian; English replaces them through this table.
 export type Language = "ru" | "en";
 export const english: Record<string, string> = {
+  "✅ Записал ваше «да». Фаза идёт дальше.": "✅ Recorded your «yes». The phase moves on.",
+  "Напишите ответом на это сообщение, почему «нет» — фаза вернётся с вашими словами.": "Reply to this message with why «no» — the phase goes back with your words.",
+  "✅ Ответ передан фазе.": "✅ The answer went to the phase.",
+  "↩️ Записал «нет» с вашими словами. Фаза вернётся.": "↩️ Recorded «no» with your words. The phase goes back.",
+  "⚠️ Фаза не приняла ответ: ": "⚠️ The phase did not take the answer: ",
+  "✅ Да": "✅ Yes",
+  "❌ Нет": "❌ No",
+  "Открыть пульт": "Open the cockpit",
+  "❓ Фаза спрашивает": "❓ The phase asks",
+  "✋ Фаза ждёт вашего слова": "✋ The phase waits for your word",
+  "🏁 Фаза закрыта": "🏁 Phase closed",
+  "➡️ Фаза перешла на стадию: ": "➡️ The phase moved to stage: ",
+  "Ответьте на это сообщение — ответ уйдёт фазе.": "Reply to this message — the answer goes to the phase.",
+  "«Да» — кнопкой; «нет» — кнопкой и затем ответом с причиной.": "«Yes» — with the button; «no» — with the button and then a reply with the reason.",
   "Начать новый чат BB с этим сообщением? Ответь «да».": "Start a new BB chat with this message? Reply «yes».",
   "Этот бот работает только со своим владельцем.": "This bot works only with its owner.",
   "Я читаю текст, голосовые, фото и файлы. Напиши словами, что сделать.": "I read text, voice notes, photos and files. Write in words what to do.",

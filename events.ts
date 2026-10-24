@@ -10,6 +10,10 @@ export const EVENT_KINDS = [
   "thread_done",
   "thread_attention",
   "thread_stopped",
+  "phase_stage",
+  "phase_question",
+  "phase_word",
+  "phase_closed",
 ] as const;
 export type EventKind = (typeof EVENT_KINDS)[number];
 export const eventRuleSchema = z
@@ -53,6 +57,10 @@ export function defaultEvents(old?: {
     thread_done: rule(true, false),
     thread_attention: rule(true, sound),
     thread_stopped: rule(true, sound),
+    phase_stage: rule(true, false),
+    phase_question: rule(true, sound),
+    phase_word: rule(true, sound),
+    phase_closed: rule(true, false),
   };
 }
 export function readEvents(
@@ -69,7 +77,7 @@ export function readEvents(
   return base;
 }
 export function eventKind(e: Pick<Event, "kind" | "status">): EventKind | null {
-  if (e.kind.startsWith("thread_")) return e.kind as EventKind;
+  if (e.kind.startsWith("thread_") || e.kind.startsWith("phase_")) return e.kind as EventKind;
   if (e.kind === "worker_error") return "worker_error";
   if (e.kind === "created") return "task_created";
   if (e.kind === "started") return "task_started";
@@ -83,7 +91,10 @@ export function route(events: Events, kind: EventKind, projectId: string) {
   return { send, sound: send && r.sound };
 }
 export const taskKindsOn = (events: Events) =>
-  EVENT_KINDS.some((k) => !k.startsWith("thread_") && events[k].on);
+  EVENT_KINDS.some((k) => !k.startsWith("thread_") && !k.startsWith("phase_") && events[k].on);
+// Lane Pilot is read when its task events or its phase events are wanted.
+export const laneKindsOn = (events: Events) =>
+  taskKindsOn(events) || EVENT_KINDS.some((k) => k.startsWith("phase_") && events[k].on);
 
 export type ThreadOutcome = "done" | "attention" | "stopped";
 // BB reports what happened in the thread; the current status decides whether the turn really ended.
