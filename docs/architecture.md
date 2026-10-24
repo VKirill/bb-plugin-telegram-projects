@@ -1,79 +1,84 @@
-# Проект двустороннего BB ↔ Telegram
+---
+title: Architecture
+type: architecture
+created: 2026-09-12
+updated: 2026-10-24
+status: active
+confidence: medium
+tags: [architecture, telegram, bb-plugin]
+sources:
+  - server.ts
+  - chat.ts
+  - ingress.ts
+  - model.ts
+  - adapters.ts
+  - app.tsx
+  - companion/aivech/src/main.ts
+  - companion/aivech/src/bot.ts
+  - companion/aivech/src/projects.ts
+  - companion/aivech/src/chat.ts
+  - companion/aivech/src/locale.ts
+---
 
-**Обновление 0.2.0:** текстовые разговоры, меню, дополнительные темы, голос и Rich Messages реализованы. Единственный poller остался в companion: он пишет постоянный локальный inbox, BB-плагин обрабатывает его через SDK. Перенос polling в плагин ниже — первоначальное предложение, не текущая схема. Актуальное поведение: [README](../README.md), [инструкция](usage.md), [проверка](verification-0.2.md).
+# Architecture
 
+TL;DR: The BB plugin owns Telegram polling, project topic synchronization, event delivery, and chat bridging; the optional companion owns SMS delivery and reads the plugin's published project/task projection.
 
-Статус: техническое предложение после исследования; не описание уже реализованного чата. Проверены поверхности SDK 0.4.84 / BB 0.43.0 и существующий проектный плагин. Новые публичные API ядра не требуются на первом этапе.
+## System context
 
-## Пространство пользователя
+```mermaid
+C4Context
+  title Telegram Projects system context
+  Person(owner, "Owner", "Uses BB and a private Telegram bot")
+  System(plugin, "Telegram Projects plugin", "BB settings UI, SQLite state, Telegram receiver and BB chat bridge")
+  System_Ext(telegram, "Telegram Bot API", "Topics, messages, callbacks and voice files")
+  System_Ext(bb, "BB", "Projects, threads, interactions, plugin RPC and storage")
+  System_Ext(lane, "Lane Pilot", "Task runs read over plugin RPC")
+  System_Ext(folders, "Project Folders", "Optional visibility and folder metadata")
+  System_Ext(companion, "Aivech companion", "Optional SMS delivery and project/task commands")
+  Rel(owner, telegram, "Sends commands, messages and voice")
+  Rel(plugin, telegram, "Polls updates and sends messages")
+  Rel(plugin, bb, "Uses SDK threads, settings, storage and plugin RPC")
+  Rel(plugin, lane, "Calls list_runs and get_run_card")
+  Rel(plugin, folders, "Reads folder visibility and metadata")
+  Rel(companion, telegram, "Polls updates and sends SMS and command replies")
+  Rel(companion, plugin, "Reads published project/task projection and writes chat spool")
+```
 
-В боте остаются «Навигация», «SMS» и по одной теме проекта. Проектная тема показывает его Tasks и по желанию содержит один активный разговор BB. `/new` создаёт новую сессию и перепривязывает разговор; прежняя сессия остаётся доступна в списке. Для параллельного разговора — отдельная тема с названием «Проект · Название сессии».
+## Building blocks
 
-Разделы выбираются внутри меню проекта. Telegram-темы не изображают вложенную файловую иерархию. Привязка хранит ID проекта, раздела, host, environment и thread, а не только отображаемое имя. Одинаковые имена не считаются одинаковыми папками. В шапке текущего разговора видны проект, раздел, устройство, провайдер и модель.
+| Block | Responsibility | Evidence |
+|---|---|---|
+| `server.ts` plugin entry | Defines settings and RPC, creates the SQLite state store, starts polling/sync loops, handles lifecycle and commands. | (server.ts:89-148), (server.ts:149-208), (server.ts:262-292) |
+| `app.tsx` settings panel | Loads preferences/status through RPC and renders the plugin tabs; Events lets the operator set event enablement, sound and project filters. | (app.tsx:30-89), (app.tsx:648-707) |
+| `ingress.ts` | Filters Telegram updates and creates chat/tasks/pair/refusal/ignore ingress values. | (ingress.ts:14-70) |
+| `chat.ts` ChatBridge | Persists per-topic bindings, maps messages to BB threads and sends results back through Telegram. | (chat.ts:129-188) |
+| `model.ts` | Defines the state records and reconciles projects, tasks, events and Telegram topics. | (model.ts:1-54), (model.ts:140-183), (model.ts:249-279) |
+| `adapters.ts` | Wraps Telegram API, Env Catalog token lookup, Lane Pilot task RPC, and BB voice transcription. | (adapters.ts:12-69), (adapters.ts:138-175), (adapters.ts:176-226) |
+| companion | Optional Node service with SMS outbox, bot commands, and projection reader. | (companion/aivech/src/main.ts:11-70), (companion/aivech/src/bot.ts:14-51), (companion/aivech/src/projects.ts:19-32), (companion/aivech/src/locale.ts:222-224) |
 
-При выборе проекта показываем существующие разделы и окружения. Отсутствующее или отключённое окружение вызывает понятный ответ, не незаметный переход в домашний каталог. Для существующего разговора сохраняется его environment. Служебные workers Tasks остаются скрытыми; личные Telegram-разговоры видимы в BB.
+## Runtime boundaries
 
-## Команды и меню
+The plugin registers `rpcContract` for preference, connection, pairing, status, sync, topic initialization, event settings, summary defaults, and agency delivery methods. The React panel calls these methods through the typed BB RPC interface. (server.ts:89-148), (app.tsx:44-54)
 
-| Команда | Результат |
-|---|---|
-| `/projects` | Кнопки проектов; переход к темам и выбор контекста |
-| `/section` | Раздел и окружение для нового разговора |
-| `/new` | Создать сессию с текущими выбранными настройками |
-| `/sessions`, `/use` | Список сессий выбранного проекта и явная привязка |
-| `/reset` | Подтверждённое начало чистой сессии; прежний чат остаётся |
-| `/model` | Модели выбранного BB-провайдера; показать область изменения |
-| `/agent` | Выбор провайдера и поддерживаемого пресета; это разные сущности |
-| `/stop` | Остановить текущий запуск в привязанном thread |
-| `/status` | Состояние разговора, очередь и ссылка в BB |
-| `/tasks` | Задачи текущего проекта |
-| `/task` | Явное создание задачи Tasks, когда интеграция готова |
-| `/help` | Короткое меню и описание активного контекста |
+The plugin uses the Telegram Bot API through a single adapter and polls updates itself. `routeUpdate` accepts only private-chat updates where sender ID equals chat ID; once paired, only the owner reaches chat processing. `/tasks` is classified for plugin handling. (adapters.ts:12-69), (ingress.ts:14-47)
 
-Обычное текстовое сообщение отправляется в выбранную сессию. Если привязки нет, сначала показываем проект/раздел и предлагаем создать сессию. Команда создания задачи отличается от обычного разговора: не превращаем каждое сообщение в карточку Tasks.
+The companion is a separate optional process. It reads Telegram-project state from a JSON projection and reads the SMS inbox database read-only; its own SQLite outbox tracks SMS delivery. The companion handles `/projects`, `/tasks`, and `/status`; chat updates are atomically spooled for the plugin when chat bridging is enabled. (companion/aivech/src/main.ts:20-32), (companion/aivech/src/bot.ts:20-45), (companion/aivech/src/chat.ts:24-81), (companion/aivech/src/projects.ts:19-32)
 
-Переключение провайдера может требовать новой сессии. Прежде чем поддерживать продолжение контекста между провайдерами, проверяем доступные операции BB. Не обещаем перенос внутренней provider session. `/reset` не удаляет проект, тему или файлы.
+## Related pages
 
-## Контракты BB
+- [Overview](overview.md)
+- [Interaction flow](interaction-0.3.1.md)
+- [Data model](data-model.md)
+- [Deployment](deployment.md)
+- [Gotchas](gotchas.md)
 
-- Проекты, environments и provider models получаем через `bb.sdk`; значения меню валидируем заново при действии.
-- Новый разговор — `bb.sdk.threads.spawn` с выбранным project/environment и обычным пользовательским вводом. Настройки наследуются из BB там, где API это поддерживает; не заводим дублирующий каталог моделей.
-- Продолжение — `threads.send`; остановка — `threads.stop`; история и прогресс — `timeline`, `output` или события с последовательными курсорами.
-- Проектные папки — публичный RPC `project-folders` (`list` возвращает folders/roots/bindings/errors). Перед реализацией адаптера уточнить соответствие folder, environment и core threadSection: это не взаимозаменяемые ID.
-- `AGENTS.md` и остальные инструкции подхватывает штатная сессия выбранного провайдера в своём окружении. Не копируем весь файл в Telegram и не создаём вторую версию правил.
-- Вопросы — `interaction.pending` и `threads.interactions`; типы user_answer, request_answer и разрешения обрабатываются явно. Неподдерживаемая plugin form открывается ссылкой в BB.
-- Голос — `bb.sdk.system.transcribeVoice({file: Blob, ...})`; штатный CLI-эквивалент `bb voice transcribe`. Это использует выбранную службу транскрибации BB. Название Whisper не фиксируем в коде.
+<!-- lane-pilot:backlinks -->
+## Referenced by
 
-Сигнатуры нужно сверять с установленным SDK при реализации и каждом обновлении, особенно экспериментальные поверхности.
-
-## Доставка и процесс
-
-Сейчас один launchd companion читает Telegram updates, а BB-плагин отправляет уведомления и projection-файл. Нельзя запускать второй `getUpdates` с тем же токеном.
-
-Для расширения предлагаем перенести владение входящим транспортом в BB-плагин. Переключение должно быть управляемым: остановить текущий polling, сохранить SMS-доставку отдельным процессом, включить новый транспорт, проверить backlog и предусмотреть откат. Перед переключением проверить webhook. Существующие SMS и очередь не терять.
-
-Постоянные таблицы нового транспорта: bindings, inbox, delivery/outbox, interactions, output cursors. Update сначала записывается в inbox, затем считается принятым для polling offset. Дедупликация по update_id; обработка последовательно для одной сессии, независимо между сессиями. Голос сохраняет место в очереди, чтобы следующий текст не обогнал транскрипцию.
-
-Для каждого эффекта храним исходный update, состояние и полученный thread/message ID. Не заявляем exactly-once для внешних вызовов: при обрыве после выполнения и до квитанции требуется сверка или отметка неопределённого результата. Особенно нельзя автоматически повторять spawn после неопределённого ответа без способа восстановить созданную сессию. При перезагрузке один активный consumer; старое поколение не продолжает отправку. 429 учитывает retry_after, ожидание и ошибка видны пользователю.
-
-События выводятся только для привязанных к Telegram сессий и Tasks. Обзор всех обычных чатов по умолчанию не включается. При перепривязке темы старый ответ не попадает в новый разговор: каждое исходящее сообщение закреплено за thread и поколением binding.
-
-## Вопросы и разрешения
-
-Карточка содержит краткий контекст и варианты ответа. Кнопка несёт короткий непрозрачный ID; thread/interaction/owner/срок жизни сохраняются на сервере. Проверяются отправитель, тема, текущий pending status и поколение привязки. Повторное нажатие не разрешает действие повторно.
-
-Обычный вопрос допускает выбор или текстовый ответ, связанный с конкретной карточкой. Разрешение показывает запрошенное действие и область доступа, с раздельными «разрешить один раз» и «отказать». Разрешение на сессию доступно только если его поддерживает BB и явно выбрал владелец. Текст «да» вне ожидаемого вопроса не является универсальным approval. Если в BB уже ответили, кнопки становятся неактивными или сообщают, что вопрос закрыт.
-
-## Голос и оформление
-
-Скачать Telegram voice после owner-проверки с ограничением размера/длительности, проверить MIME, передать Blob в BB transcription. После успеха показать распознанный текст и отправить в ту же сессию. Для сомнительной транскрипции или предпочтения пользователя предусмотреть «исправить перед отправкой». Временный файл удалить после обработки; аудио не хранить в очереди бессрочно. Ошибка транскрибации не создаёт пустой turn.
-
-Прогресс — одна обновляемая карточка: принято, выполняется, требуется ответ, завершено/ошибка/остановлено. Публиковать доступные пользователю статусы, действия и результаты; не пытаться извлекать скрытые рассуждения. Длинный итог — native Rich Message с заголовками и раскрываемыми подробностями, вложения отдельно при необходимости. Draft по завершении обязательно заменяется сохраняемым итогом. Для несовместимого клиента есть текстовый режим.
-
-## Уведомления Tasks
-
-По умолчанию: запуск исполнителя, нужна проверка/ответ, завершение, ошибка, отмена; изменение срока и новые задачи можно выключать. Промежуточный прогресс тихий, внимание — для ошибки/вопроса. Задача показывает проект, подпроект, ключ, результат и ссылку. Результат обычного Telegram-разговора приходит в его тему, но не становится системным уведомлением обо всех чатах.
-
-## Удаление
-
-В 0.1 deleteTopics уже удаляет историю темы после удаления проекта — это текущая выбранная политика. С появлением интерактивных разговоров меню удаления должно явно показывать затрагиваемые сессии и темы. До реализации миграции не расширять удаление на дополнительные темы автоматически. Для будущей универсальной версии предложить настройку «архивировать/удалять» с понятным предупреждением, не менять существующее поведение молча.
+- [Data model](data-model.md)
+- [Deployment](deployment.md)
+- [Telegram interaction flow](interaction-0.3.1.md)
+- [Telegram Projects overview](overview.md)
+- [Telegram integration research](research.md)
+- [Use BB from Telegram](usage.md)
