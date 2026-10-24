@@ -1,15 +1,39 @@
-# Проверка 0.2.0 — 2026-09-12
+---
+title: Version 0.2 verification
+type: gaps
+created: 2026-09-12
+updated: 2026-10-24
+status: active
+confidence: low
+tags: [verification, telegram, voice]
+sources:
+  - test/ingress.test.ts
+  - chat.ts
+  - adapters.ts
+  - ingress.ts
+---
 
-## Локально
+# Version 0.2 verification
 
-TypeScript и сборка BB проходят. 26 тестов плагина + 6 тестов companion: привязки тем/проектов, создание/продолжение сессии, выбор каталога/модели, подтверждение остановки, пагинация Tasks, дедупликация входящих, owner gate, устаревшие кнопки, свободный ответ на вопрос, одноразовое разрешение, отложенная доставка, 429, редактирование прогресса и сохранение тем при reload.
+TL;DR: The verification record covers a live text and voice conversation and notes that a real provider-generated approval was not confirmed. The ingress and voice limits are enforced in code. (test/ingress.test.ts:8-105), (adapters.ts:176-186)
 
-## Сквозной тест на настоящем Telegram
+## Recorded local checks
 
-От аккаунта владельца отправлено `/project` в отдельную тестовую тему. Нажатием выбраны BB-сервис → Codex → GPT-5.6-Luna. Сообщение создало видимый BB thread `thr_hu4b3kfw2r` в `/Users/vechkasov/Documents/BB-сервис`. Агент вернул `BB_TELEGRAM_OK`; в Telegram подтверждён native RichMessage с этим текстом.
+The prior verification record reports TypeScript/build success and plugin plus companion tests for topic binding, chat, voice, interactions, queue recovery and Telegram retry handling. This page preserves that recorded result; this documentation refresh did not rerun those checks.
 
-Через `/disconnect` → `/chats` → карточка → «Подключиться» повторно выбран тот же thread. Синтетическое голосовое OGG/Opus прошло Telegram → штатная BB transcription → та же сессия. Транскрипт совпал с тестовой фразой, ответ `voice test complete` вернулся native RichMessage. Отдельных credentials для транскрибации не вводилось. Привязка и доставка сохранились через reload.
+The current ingress tests cover owner text routing, rejection of other users/groups/foreign callbacks, `/tasks`, `bb:` callbacks, new topics, pairing and unsupported sticker refusal. (test/ingress.test.ts:8-105)
 
-Тестовая попытка вызвать структурированный вопрос в обычном Codex-режиме закончилась сообщением агента о недоступности инструмента. Поэтому реальный provider-generated approval/question в этом сквозном тесте НЕ подтверждён. Поддерживаемые payloads проверены контрактными тестами с mock SDK; сложные формы явно направляются в BB.
+## Recorded live check
 
-Проверка не меняла проектные файлы агентом. Тестовая тема 956276 удалена после проверки; привязка удалена, тестовый BB thread архивирован и остановлен. Не заявляется проверка всех моделей, типов разрешений или Telegram-клиентов.
+The owner sent `/project` in a test topic, selected a project/model and sent a prompt. The record reports that the message created a BB thread and the reply arrived as a Telegram Rich Message. The owner then disconnected and reconnected the thread, sent synthetic OGG/Opus voice, and received the transcription result in that thread.
+
+The live check did not confirm a provider-generated structured approval/question. Mock SDK tests were used for supported interaction payloads; complex forms were directed to BB. The current bridge's voice input is still limited to 15,000,000 bytes and 600 seconds before transcription. (adapters.ts:176-186)
+
+## Limits recorded
+
+The live check did not cover every model, permission form, Telegram client or provider. The repository's ingress contract still rejects group and foreign-user updates before chat processing. (ingress.ts:23-35), (test/ingress.test.ts:32-51)
+
+<!-- lane-pilot:backlinks -->
+## Referenced by
+
+- [Roadmap and release state](roadmap.md)
