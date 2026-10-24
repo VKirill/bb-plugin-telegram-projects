@@ -27,8 +27,8 @@ export function telegram(
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          ...body,
-          ...(method === "getMe" ||
+          ...Object.fromEntries(Object.entries(body).filter(([key]) => key !== "strangerChatId")),
+          ...(typeof body.strangerChatId === "number" ? { chat_id: body.strangerChatId } : method === "getMe" ||
           method === "getUpdates" ||
           method === "setMyCommands" ||
           method === "setMyDescription" ||

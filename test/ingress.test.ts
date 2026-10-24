@@ -96,5 +96,10 @@ test("before pairing only /start with the page code binds the owner", () => {
   assert.equal(route(u("/start 999999"), undefined, "123456").kind, "ignore");
   assert.equal(route(u("привет"), undefined, "123456").kind, "ignore");
   assert.equal(route(u("/start 123456"), undefined, undefined).kind, "ignore");
-  assert.equal(route(u("/start 123456", 7), 42, "123456").kind, "ignore");
+  // Once paired, another person's private chat is a stranger: one sentence, never the conversation.
+  assert.deepEqual(route(u("/start 123456", 7), 42, "123456"), { kind: "stranger", chatId: 7 });
+});
+test("the owner's sticker gets a polite refusal", () => {
+  const sticker = { update_id: 5, message: { message_id: 9, chat, from, message_thread_id: 3, sticker: { file_id: "s" } } };
+  assert.deepEqual(routeUpdate(sticker), { kind: "refuse", topicId: 3 });
 });

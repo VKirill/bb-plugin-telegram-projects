@@ -5,6 +5,7 @@ export const preferencesSchema = z
     enabled: z.boolean(),
     chatEnabled: z.boolean(),
     richReplies: z.boolean(),
+    confirmNewChat: z.boolean().optional(),
     deleteTopics: z.boolean(),
     hideWithFolders: z.boolean(),
     reportMode: z.enum(["full", "summary"]),

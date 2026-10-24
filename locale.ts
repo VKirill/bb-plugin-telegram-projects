@@ -1,6 +1,10 @@
 // Telegram texts are written in Russian; English replaces them through this table.
 export type Language = "ru" | "en";
 export const english: Record<string, string> = {
+  "Начать новый чат BB с этим сообщением? Ответь «да».": "Start a new BB chat with this message? Reply «yes».",
+  "Этот бот работает только со своим владельцем.": "This bot works only with its owner.",
+  "Я читаю текст, голосовые, фото и файлы. Напиши словами, что сделать.": "I read text, voice notes, photos and files. Write in words what to do.",
+  "Общение с BB из Telegram выключено. Включи его на странице плагина Telegram Projects.": "Talking to BB from Telegram is off. Turn it on on the Telegram Projects plugin page.",
   "❓ Агентство: нужен ответ": "❓ Agency: answer needed",
   "Агентство · уведомление": "Agency · notice",
   "Уведомления Lane Pilot будут приходить в тему своего проекта. Это проверка доставки, не настоящая задача.": "Lane Pilot notifications will arrive in their project topic. This is a delivery check, not a real task.",

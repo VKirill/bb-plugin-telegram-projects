@@ -61,6 +61,7 @@ type Binding = {
   progressId?: number;
   progressText?: string;
   lastProgress?: number;
+  typedAt?: number;
 };
 type Action = {
   topicId: number;
@@ -152,6 +153,8 @@ export class ChatBridge {
       wake?: () => void;
       language?: () => Language;
       rich: () => boolean;
+      /** A new chat starts only after the owner's whole «да» to its first message. */
+      confirmNewChat?: () => boolean;
       transcribe?: (v: NonNullable<ChatInput["voice"]>) => Promise<string>;
     },
   ) {}
@@ -1161,6 +1164,19 @@ export class ChatBridge {
         await this.menu(b);
         return;
       }
+      // A draft waits for «yes» (setting confirmNewChat): the first message of a new chat is kept and shown back; only a whole
+      // «да» starts the chat with it, anything else replaces the draft.
+      if (this.d.confirmNewChat?.()) {
+        const draftKey = "chat:draft:" + input.topicId;
+        const draft = this.s.get<string>(draftKey);
+        if (!(draft && /^(да|ок|ok|yes|go|давай)[.!]?$/i.test(text.trim()))) {
+          this.s.put(draftKey, text);
+          this.enqueue(input.topicId, this.tr("Начать новый чат BB с этим сообщением? Ответь «да»."));
+          return;
+        }
+        this.s.del(draftKey);
+        text = draft;
+      }
       const environment = await this.environment(b);
       let prompt = text;
       if (b.profileId) {
@@ -1729,6 +1745,11 @@ export class ChatBridge {
         });
         for (const i of pending.filter((i) => i.status === "pending"))
           this.question(b, i);
+        // The «typing» sign while the chat works, renewed every few seconds (Telegram shows it for five).
+        if (t.status === "active" && Date.now() - (b.typedAt ?? 0) > 4500) {
+          b.typedAt = Date.now();
+          void this.d.tg("sendChatAction", { message_thread_id: b.topicId || undefined, action: "typing" }).catch(() => {});
+        }
         const status = pending.some((i) => i.status === "pending")
           ? this.tr("нужен ответ")
           : (this.tr(states[t.status] ?? t.status) ?? t.status) +

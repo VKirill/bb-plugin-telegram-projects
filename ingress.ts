@@ -4,6 +4,8 @@ export type Ingress =
   | { kind: "chat"; input: ChatInput; callbackId?: string }
   | { kind: "tasks"; topicId: number }
   | { kind: "pair"; userId: number }
+  | { kind: "stranger"; chatId: number }
+  | { kind: "refuse"; topicId: number }
   | { kind: "ignore"; callbackId?: string };
 
 // The plugin is the bot's only getUpdates receiver. The owner gate precedes everything:
@@ -26,7 +28,8 @@ export function routeUpdate(
       ? { kind: "pair", userId: from.id }
       : { kind: "ignore", callbackId };
   }
-  if (from.id !== owner) return { kind: "ignore", callbackId };
+  // A stranger chat gets one sentence (the server says it once per person), never the conversation.
+  if (from.id !== owner) return cq ? { kind: "ignore", callbackId } : { kind: "stranger", chatId: m.chat.id };
   const callback: string | undefined = cq?.data;
   if (callback && !callback.startsWith("bb:"))
     return { kind: "ignore", callbackId };
@@ -39,8 +42,9 @@ export function routeUpdate(
   const topicId = m.message_thread_id ?? 0;
   if (!callback && text?.match(/^\/tasks(?:@\w+)?(?:\s|$)/))
     return { kind: "tasks", topicId };
+  // Not text: a sticker, a location, a video note — a polite refusal instead of silence.
   if (!callback && !text && !m.voice && !m.audio && !m.document && !m.photo)
-    return { kind: "ignore" };
+    return { kind: "refuse", topicId };
   const v = m.voice ?? m.audio;
   return {
     kind: "chat",

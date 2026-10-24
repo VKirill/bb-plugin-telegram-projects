@@ -55,6 +55,7 @@ import {
   type Project,
 } from "./model";
 const statusSchema = z.object({
+  link: z.enum(["off", "awaiting_code", "linked"]),
   chatEnabled: z.boolean(),
   chatBindings: z.array(
     z.object({
@@ -162,6 +163,11 @@ export default async function plugin(bb: BbPluginApi) {
     chatEnabled: {
       type: "boolean",
       label: "Общение с BB из Telegram",
+      default: false,
+    },
+    confirmNewChat: {
+      type: "boolean",
+      label: "Новый чат из Telegram — только после «да»",
       default: false,
     },
     richReplies: {
@@ -293,6 +299,7 @@ export default async function plugin(bb: BbPluginApi) {
   let lastSync: string | null = null;
   let wake: (() => void) | undefined;
   let ingressError: string | null = null;
+  let ingressBackoff = 10_000;
   let activeTasks: { task: Task; project: Project }[] = [];
   let laneTasks: { task: Task; project: Project }[] = [];
   let lanePolledAt = 0;
@@ -328,14 +335,21 @@ export default async function plugin(bb: BbPluginApi) {
   // Owner and bot are learned at runtime: pairing sets the owner, the first getMe the bot.
   const ownerId = () => store.get<number>("owner:id");
   const botId = () => store.get<number>("bot:id");
+  /** The pairing code: 8 characters a person can type, alive 10 minutes; a stale one is replaced. */
+  const PAIR_TTL_MS = 10 * 60_000;
+  const PAIR_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   function pairCode() {
     let code = store.get<string>("pair:code");
-    if (!code) {
-      code = String(randomInt(100000, 1000000));
+    const madeAt = store.get<number>("pair:codeAt") ?? 0;
+    if (!code || Date.now() - madeAt > PAIR_TTL_MS) {
+      code = Array.from({ length: 8 }, () => PAIR_ALPHABET[randomInt(0, PAIR_ALPHABET.length)]).join("");
       store.put("pair:code", code);
+      store.put("pair:codeAt", Date.now());
     }
     return code;
   }
+  /** The live pairing code, or undefined when it expired (a code older than 10 minutes pairs nobody). */
+  const livePairCode = () => (Date.now() - (store.get<number>("pair:codeAt") ?? 0) <= PAIR_TTL_MS ? store.get<string>("pair:code") : undefined);
   let chatWake: (() => void) | undefined;
   async function events(): Promise<Events> {
     const saved = store.get("events:config");
@@ -411,6 +425,8 @@ export default async function plugin(bb: BbPluginApi) {
       error: lastError,
       queue: store.list("queue:").length,
       ingressError,
+      // Off, awaiting code, linked: the one word the window shows for the bot.
+      link: (!cfg.enabled ? "off" : ownerId() ? "linked" : "awaiting_code") as "off" | "linked" | "awaiting_code",
       owner: ownerId() ?? null,
       menu:
         store.get<{ command: string; description: string }[]>("menu:served") ??
@@ -1232,6 +1248,7 @@ export default async function plugin(bb: BbPluginApi) {
         ? makeChatControlPublisher(join(companion, "telegram-chat.json"))
         : async () => {};
       let rich = true;
+      let confirmNewChat = false;
       let currentUrl = "";
       let language: "ru" | "en" = "ru";
       let activeAbort: AbortController | undefined;
@@ -1254,6 +1271,7 @@ export default async function plugin(bb: BbPluginApi) {
           const cfg = await settings.get();
           if (cfg.enabled && cfg.chatEnabled) {
             rich = cfg.richReplies;
+            confirmNewChat = cfg.confirmNewChat === true;
             currentUrl = new URL(cfg.appUrl).origin;
             language = cfg.language as "ru" | "en";
             if (!bridge) {
@@ -1275,6 +1293,7 @@ export default async function plugin(bb: BbPluginApi) {
                 },
                 signal: bridgeSignal,
                 rich: () => rich,
+                confirmNewChat: () => confirmNewChat,
                 language: () => language,
                 wake: wakeChat,
                 transcribe: (v) =>
@@ -1381,7 +1400,7 @@ export default async function plugin(bb: BbPluginApi) {
           });
           ingressError = null;
           for (const u of updates) {
-            const route = routeUpdate(u, ownerId(), store.get("pair:code"));
+            const route = routeUpdate(u, ownerId(), livePairCode());
             if (route.kind === "pair") {
               store.put("owner:id", route.userId);
               store.del("pair:code");
@@ -1392,9 +1411,23 @@ export default async function plugin(bb: BbPluginApi) {
                 ),
               });
               wake?.();
+            } else if (route.kind === "stranger") {
+              // One sentence, once per person: the bot serves its owner only.
+              if (!store.get(`stranger:${route.chatId}`)) {
+                store.put(`stranger:${route.chatId}`, Date.now());
+                await tg("sendMessage", { strangerChatId: route.chatId, text: translate(cfg.language as "ru" | "en", "Этот бот работает только со своим владельцем.") }).catch(() => {});
+              }
+            } else if (route.kind === "refuse") {
+              await tg("sendMessage", { message_thread_id: route.topicId || undefined, text: translate(cfg.language as "ru" | "en", "Я читаю текст, голосовые, фото и файлы. Напиши словами, что сделать.") }).catch(() => {});
             } else if (route.kind === "chat" && cfg.chatEnabled && bridge) {
               bridge.accept(route.input);
               chatWake?.();
+            } else if (route.kind === "chat" && !cfg.chatEnabled) {
+              // Conversation not connected: said once an hour, not on every message.
+              if (Date.now() - (store.get<number>("chatOffSaidAt") ?? 0) > 3_600_000) {
+                store.put("chatOffSaidAt", Date.now());
+                await tg("sendMessage", { message_thread_id: route.input.topicId || undefined, text: translate(cfg.language as "ru" | "en", "Общение с BB из Telegram выключено. Включи его на странице плагина Telegram Projects.") }).catch(() => {});
+              }
             } else if (route.kind === "tasks")
               await tg("sendMessage", {
                 message_thread_id: route.topicId || undefined,
@@ -1406,11 +1439,13 @@ export default async function plugin(bb: BbPluginApi) {
               }).catch(() => {});
             store.put("ingress:offset", u.update_id + 1);
           }
+          ingressBackoff = 10_000;
         } catch (e) {
           if (signal.aborted) break;
-          // telegram_409: another process still polls this bot.
+          // telegram_409: another process still polls this bot. Backoff after a failure: 10 s, doubling to 5 min.
           ingressError = safeError(e);
-          await pause(10_000);
+          await pause(ingressBackoff);
+          ingressBackoff = Math.min(ingressBackoff * 2, 300_000);
         }
       }
     },
