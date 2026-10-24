@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.11.1 — 2026-10-24
+
+No late task notices after a pause. A read of a project more than 30 minutes after the last one is a silent new baseline: the changes that happened while the plugin was off are history, not news (on re-enabling after three days the plugin queued 928 old task events). A task event that waited in the queue more than 6 hours is dropped, never sent late.
+
+Без запоздалых уведомлений после перерыва. Чтение проекта через 30 минут и больше после прошлого — тихая новая точка отсчёта: изменения за время простоя не шлются (после включения через три дня плагин поставил в очередь 928 старых событий). Событие, пролежавшее в очереди больше 6 часов, выбрасывается.
+
 ## 0.11.0 — 2026-10-24
 
 The Telegram part of the SMA map. Another person's private chat with the bot gets one sentence, once (the bot serves its owner only). A sticker, a location or a video note from the owner gets a polite refusal instead of silence. With chat off, a message is answered once an hour that talking to BB from Telegram is off. While BB works on a chat's reply, Telegram shows «typing». A failed getUpdates waits 10 s, doubling to 5 min, instead of 10 s every time. The pairing code is 8 characters and lives 10 minutes. The status says the link state (`off`, `awaiting_code`, `linked`). The new setting «Новый чат из Telegram — только после «да»» (`confirmNewChat`, off by default) keeps the first message of a new chat as a draft until a whole «да».

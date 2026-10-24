@@ -136,14 +136,21 @@ export function formatEvent(
 }
 const taskKey = (projectId: string, t: Pick<Task, "runId" | "id">) =>
   `lptask:${projectId}:${t.runId}:${t.id}`;
-/** Compare a project's Lane Pilot tasks with the last snapshot and queue what changed. The first read is silent. */
+/** A read after a pause this long is a new baseline: what changed while the plugin was off is history, not news. */
+export const STALE_READ_MS = 30 * 60_000;
+/** A task event older than this in the queue is dropped instead of sent. */
+export const STALE_EVENT_MS = 6 * 3_600_000;
+export const staleEvent = (e: Pick<Event, "kind" | "at">, now = Date.now()) =>
+  !e.kind.startsWith("agency_") && e.kind !== "test" && now - Date.parse(e.at) > STALE_EVENT_MS;
+/** Compare a project's Lane Pilot tasks with the last snapshot and queue what changed. The first read is silent, and so is a read after a long pause. */
 export function ingest(
   store: Store,
   project: Project,
   tasks: Task[],
   now = Date.now(),
 ) {
-  const baseline = store.get<boolean>("lpbaseline:" + project.id);
+  const lastRead = store.get<number>("lpread:" + project.id) ?? 0;
+  const baseline = store.get<boolean>("lpbaseline:" + project.id) && now - lastRead <= STALE_READ_MS;
   store.atomic(() => {
     const seen = new Set<string>();
     for (const task of tasks) {
@@ -178,6 +185,7 @@ export function ingest(
     for (const { key } of store.list("lptask:" + project.id + ":"))
       if (!seen.has(key)) store.del(key);
     store.put("lpbaseline:" + project.id, true);
+    store.put("lpread:" + project.id, now);
   });
 }
 /** Snapshot keys the Tasks plugin used; Lane Pilot replaced it. */

@@ -44,6 +44,7 @@ import {
   ensureTopic,
   reconcileProjects,
   ingest,
+  staleEvent,
   dropTasksSnapshots,
   escapeHtml,
   formatEvent,
@@ -607,6 +608,8 @@ export default async function plugin(bb: BbPluginApi) {
     for (const { key, value: e } of store.list<Event>("queue:")) {
       if (sent >= 15) break;
       if (e.summary?.state === "pending") continue;
+      // A task event that waited past its time is old news: dropped, never sent late.
+      if (staleEvent(e)) { store.del(key); continue; }
       const agency = e.kind.startsWith("agency_");
       const kind = eventKind(e);
       const decision =

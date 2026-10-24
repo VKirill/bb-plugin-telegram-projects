@@ -191,3 +191,15 @@ test("hostile text escaped", () => {
   assert.match(text, /&lt;b&gt;evil/);
   assert.match(text, /x &amp; y/);
 });
+
+test("a read after a long pause is a new baseline, and a stale event is not sent", async () => {
+  const { staleEvent, STALE_READ_MS } = await import("../model");
+  const s = memory();
+  ingest(s, project, [task], 1_000);
+  ingest(s, project, [{ ...task, status: "done" }], 1_000 + STALE_READ_MS + 1);
+  assert.equal(queued(s).length, 0);
+  ingest(s, project, [{ ...task, status: "canceled" }], 1_000 + STALE_READ_MS + 2);
+  assert.equal(queued(s).length, 1);
+  assert.equal(staleEvent({ kind: "status", at: new Date(0).toISOString() }, 7 * 3_600_000), true);
+  assert.equal(staleEvent({ kind: "test", at: new Date(0).toISOString() }, 7 * 3_600_000), false);
+});
