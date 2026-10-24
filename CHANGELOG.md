@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.11.0 — 2026-10-24
+
+The Telegram part of the SMA map. Another person's private chat with the bot gets one sentence, once (the bot serves its owner only). A sticker, a location or a video note from the owner gets a polite refusal instead of silence. With chat off, a message is answered once an hour that talking to BB from Telegram is off. While BB works on a chat's reply, Telegram shows «typing». A failed getUpdates waits 10 s, doubling to 5 min, instead of 10 s every time. The pairing code is 8 characters and lives 10 minutes. The status says the link state (`off`, `awaiting_code`, `linked`). The new setting «Новый чат из Telegram — только после «да»» (`confirmNewChat`, off by default) keeps the first message of a new chat as a draft until a whole «да».
+
+Часть карты SMA про Telegram. Чужой человек в личке бота получает одну фразу, один раз. На стикер, геометку или кружок владелец получает вежливый отказ, а не тишину. Если общение выключено, бот раз в час отвечает, что оно выключено. Пока BB готовит ответ, Telegram показывает «печатает». После сбоя getUpdates пауза удваивается от 10 с до 5 мин. Код сопряжения — 8 символов, живёт 10 минут. Статус называет состояние связи. Новая настройка `confirmNewChat` (по умолчанию выключена): первое сообщение нового чата ждёт целого «да».
+
 ## 0.10.0 — 2026-10-12
 
 Task events now come from Lane Pilot instead of the BB Tasks plugin, which is switched off. The plugin reads each visible project's runs over the Lane Pilot RPC (`list_runs`, `get_run_card`), at most every 15 seconds. A task is its latest attempt: new, started, accepted (done), canceled, and blocked, which is the worker error alert with the block reason. Retries do not alert; each event is sent once. The first read of a project is silent, and the old Tasks snapshots are dropped. `/tasks` and the companion projection list open Lane Pilot tasks. The "needs review" and "due date changed" events are removed, since Lane Pilot has neither. The `tasks_cli_unavailable` problem is now `lane_pilot_unavailable`. No `bb` CLI calls remain.
