@@ -20,3 +20,6 @@ Version 0.3.1 wakes BB on durable spool changes; timed polling is recovery only.
 Version 0.4 adds optional CLI Agents catalog/select RPC after model selection for new sessions. Selection is target-scoped and revalidated at spawn; marker appears only in the initial prompt. No global CLI config changes. Provider/section changes clear the profile. Existing sessions keep their native role. Section profiles require an already registered matching environment.
 
 Use `/server` before choosing a model to select the new chat host. The project needs a source on that host. `/profile` opens native profiles; empty catalogs show a default-agent explanation. Existing chats keep their host.
+
+
+BB Official AskUserQuestion support: one single-select question with2–4options can be answered using Telegram buttons or a text Reply. The adapter accepts only the official ask-user-question plugin/renderer and resolves through public SDK interactions.respond. Arbitrary plugin forms, multi-select, duplicate option values/labels, visual previews or prompts/descriptions over2400characters retain the BB-only fallback. No second receiver or token is required. Codex request_user_input_async remains a separate unsupported form. An approval choice applies only to the exact content and destination the agent actually showed; delivery itself is not owner approval.

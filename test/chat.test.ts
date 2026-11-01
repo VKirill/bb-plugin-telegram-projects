@@ -101,6 +101,10 @@ function fixture() {
           calls.push(["resolve", a]);
           interactions[0].status = "resolved";
         },
+        respond: async (a: any) => {
+          calls.push(["respond", a]);
+          interactions.find(i => i.id === a.interactionId).status = "resolved";
+        },
       },
     },
   };
@@ -175,6 +179,80 @@ test("new message creates visible BB chat; subsequent message reuses it", async 
     assert.equal(f.calls[1][1].threadId, "thr_one");
   } finally {
     f.cleanup();
+  }
+});
+
+function ownerForm() {
+  return {
+    id: "owner-card-v1", status: "pending",
+    origin: { kind: "plugin", pluginId: "ask-user-question", rendererId: "ask-user-question" },
+    payload: { kind: "plugin", title: "Ответ v1", data: { questions: [{
+      id: "q0", prompt: "Точный текст и адресат v1", multiSelect: false, allowFreeText: true,
+      options: [{ value: "q0o0", label: "Согласовать", description: "Только версия 1" },
+        { value: "q0o1", label: "Доработать", description: "Написать правку" }],
+    }] } },
+  };
+}
+test("official owner form sends exact buttons and resolves one use via public respond", async () => {
+  const f = fixture();
+  try {
+    await f.bridge.handle(f.input("Run")); f.setQuestions([ownerForm()]);
+    await f.bridge.observe(); await f.bridge.flush();
+    const card = f.sent.find(x => x.text?.includes("Точный текст и адресат v1"));
+    assert.ok(card);
+    const keys = card.reply_markup.inline_keyboard.flat();
+    assert.deepEqual(keys.filter((k: any) => k.callback_data).map((k: any) => k.text), ["Согласовать", "Доработать"]);
+    await f.press("resolve"); await f.press("resolve");
+    const calls = f.calls.filter(x => x[0] === "respond");
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0][1].value, { answers: { q0: { selected: ["q0o1"] } } });
+    assert.equal(f.calls.filter(x => x[0] === "resolve").length, 0);
+  } finally { f.cleanup(); }
+});
+test("owner Reply text reaches exact form; later text does not reopen it", async () => {
+  const f = fixture();
+  try {
+    await f.bridge.handle(f.input("Run")); f.setQuestions([ownerForm()]);
+    await f.bridge.observe(); await f.bridge.flush();
+    const record = f.store.list<any>("chat:question:").find(x => x.value.interactionId === "owner-card-v1")!;
+    assert.ok(record);
+    const replyTo = Number(record.key.split(":").at(-1));
+    await f.bridge.handle({ ...f.input("Моя правка"), replyTo });
+    await f.bridge.handle({ ...f.input("Повтор"), replyTo });
+    const calls = f.calls.filter(x => x[0] === "respond");
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0][1].value, { answers: { q0: { selected: [], freeText: "Моя правка" } } });
+  } finally { f.cleanup(); }
+});
+test("owner form callback rejects changed binding and non-owner", async () => {
+  const f = fixture();
+  try {
+    await f.bridge.handle(f.input("Run")); f.setQuestions([ownerForm()]);
+    await f.bridge.observe();
+    const key = [...f.data].find(([k,v]) => k.startsWith("chat:button:") && v.kind === "resolve")![0];
+    const callback = "bb:" + key.slice("chat:button:".length);
+    assert.throws(() => f.bridge.accept({ ...f.input(""), callback, ownerId: 22 }));
+    const b = f.store.get<any>("chat:binding:100");
+    f.store.put("chat:binding:100", { ...b, revision: "new-binding" });
+    await f.bridge.handle({ ...f.input(""), callback });
+    assert.equal(f.calls.filter(x => x[0] === "respond").length, 0);
+  } finally { f.cleanup(); }
+});
+test("unrecognized, complex and truncated plugin forms never get approval buttons", async () => {
+  for (const change of [
+    (q: any) => { q.origin.pluginId = "other-plugin"; },
+    (q: any) => { q.payload.data.questions[0].multiSelect = true; },
+    (q: any) => { q.payload.data.questions[0].prompt = "x".repeat(2401); },
+    (q: any) => { q.payload.data.questions[0].options[0].preview = "unseen picture"; },
+    (q: any) => { q.payload.data.questions[0].options[1].value = "q0o0"; },
+  ]) {
+    const f = fixture();
+    try {
+      await f.bridge.handle(f.input("Run")); const q = ownerForm(); change(q); f.setQuestions([q]);
+      await f.bridge.observe(); await f.bridge.flush();
+      assert.equal([...f.data].some(([k,v]) => k.startsWith("chat:button:") && v.kind === "resolve"), false);
+      assert.ok(f.sent.some(x => x.text?.includes("Эта форма открывается в BB")));
+    } finally { f.cleanup(); }
   }
 });
 test("custom Telegram topic can bind a project before sending", async () => {

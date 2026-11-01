@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased — AskUserQuestion Telegram buttons
+
+BB Official AskUserQuestion single-choice forms now show their options as Telegram buttons and accept text replies. The adapter verifies the plugin and renderer identity, keeps pending-question/binding/replay checks, and uses the public SDK respond API. Complex, unknown, visually incomplete or oversized forms still open in BB. Requires Plugin SDK0.6.104.
+
+Одиночные вопросы BB Official AskUserQuestion теперь показывают варианты кнопками в Telegram и принимают текстовый ответ. Неизвестные, сложные и обрезанные формы по-прежнему открываются в BB. Приёмник, привязки тем и настройки не меняются.
+
 ## 0.12.0 — 2026-10-24
 
 Lane Pilot phases in the project topics. The plugin reads each project's phases (`phase_list`) with its tasks and sends four new events: the phase moved to a stage, the phase asks a question, the phase waits for the owner's word, the phase closed. A reply to a question message goes to the phase as its answer (`phase_act answer`). A word message has «Да» and «Нет» buttons: «Да» gives the word at once, «Нет» asks for a reply with the reason, which goes to the phase with the «no» (`phase_control word`, with the wave of a wave turn). As with tasks, the first read and a read after 30 minutes of silence send nothing. The task button now opens the run's PM chat instead of the removed Tasks plugin; a phase button opens the Lane Pilot cockpit. The Events tab has a «Фазы» group; turning off task notices no longer stops phase events. Needs Lane Pilot 0.1.292 for the word on the issue and wave turns.
