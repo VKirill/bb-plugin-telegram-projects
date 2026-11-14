@@ -14,12 +14,19 @@ async function waitFor(check: () => boolean, ms = 4000) {
   assert.ok(check(), "the condition did not come true in time");
 }
 /** Runs `body` with the stand-in API and short timers, and puts everything back. */
+const started: Array<{ controller: AbortController }> = [];
+const svc = (host: Host, name: string) => {
+  const run = host.harness.behavior.runService(name);
+  started.push(run);
+  return run;
+};
 async function world(body: (tg: ReturnType<typeof fakeTelegram>, timers: ReturnType<typeof fastTimers>) => Promise<void>) {
   const tg = fakeTelegram();
   const timers = fastTimers();
   try {
     await body(tg, timers);
   } finally {
+    for (const run of started.splice(0)) run.controller.abort();
     tg.restore();
     timers.restore();
   }
@@ -97,7 +104,7 @@ test("[sma:m_tg_stranger] a stranger's chat gets one sentence, once, and never t
     host.store.put("owner:id", OWNER);
     // No chat bridge is running here: were the strangers' words routed to the conversation, the loop would be holding them.
     const sentence = "Этот бот работает только со своим владельцем.";
-    const run = host.harness.behavior.runService("telegram-chat");
+    const run = svc(host, "telegram-chat");
     await sleep(60);
     await runUntilDrained(host, tg);
     run.controller.abort();
@@ -142,7 +149,7 @@ test("[sma:m_tg_paired] after pairing the words of that chat go to the conversat
   await world(async (tg) => {
     const host = await pluginHost({ chatEnabled: true });
     const { code } = await host.rpc("pairing");
-    const chat = host.harness.behavior.runService("telegram-chat");
+    const chat = svc(host, "telegram-chat");
     tg.script.push([update(1, 55, "/start " + code), update(2, 55, "собери мне сайт"), update(3, 66, "я чужой")]);
     await runUntilDrained(host, tg);
     const row = () => host.store.get<{ input: { ownerId: number; chatId: number; topicId: number }; state: string }>("chat:in:2");
@@ -190,7 +197,7 @@ test("[sma:m_tg_bridge] the chat bridge is built from the current settings: held
       await held.done;
       assert.deepEqual(tg.calls, []);
       // The chat service builds the bridge from the settings and publishes that it is on.
-      const chat = host.harness.behavior.runService("telegram-chat");
+      const chat = svc(host, "telegram-chat");
       await waitFor(() => state() === true);
       tg.script.push([update(1, OWNER, "работаем")]);
       await runUntilDrained(host, tg);
@@ -212,7 +219,7 @@ test("[sma:m_tg_restart] a change in the settings wakes the sync loop at once in
   const tg = fakeTelegram();
   try {
     const host = await pluginHost({ language: "ru" }, { subscribe: () => () => {} });
-    const sync = host.harness.behavior.runService("project-task-sync");
+    const sync = svc(host, "project-task-sync");
     const getMe = () => tg.calls.filter((c) => c.method === "getMe").length;
     await waitFor(() => getMe() === 1);
     await sleep(100);
@@ -223,6 +230,7 @@ test("[sma:m_tg_restart] a change in the settings wakes the sync loop at once in
     sync.controller.abort();
     await sync.done;
   } finally {
+    for (const run of started.splice(0)) run.controller.abort();
     tg.restore();
   }
   await world(async () => {
@@ -231,7 +239,7 @@ test("[sma:m_tg_restart] a change in the settings wakes the sync loop at once in
       const control = join(dir, "telegram-chat.json");
       const state = () => (existsSync(control) ? (JSON.parse(readFileSync(control, "utf8")) as { enabled: boolean }).enabled : undefined);
       const host = await pluginHost({ chatEnabled: false, companionDir: dir });
-      const chat = host.harness.behavior.runService("telegram-chat");
+      const chat = svc(host, "telegram-chat");
       await waitFor(() => state() === false);
       await host.harness.behavior.setSettings({ chatEnabled: true });
       await waitFor(() => state() === true);
