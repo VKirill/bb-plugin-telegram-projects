@@ -1,3 +1,4 @@
+import { ownerQuestion } from "./owner-question";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { translate, type Language } from "./locale";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
@@ -1536,19 +1537,21 @@ export class ChatBridge {
                     : null,
               },
       });
-    else if (
-      payload.kind === "user_question" &&
-      payload.questions.length === 1
-    ) {
-      const q = payload.questions[0];
+    else if (ownerQuestion(interaction)?.questions.length === 1) {
+      const form = ownerQuestion(interaction)!;
+      const q = form.questions[0];
       const option = q.options?.find((o) => o.value === a.extra);
       if (!option || q.multiSelect) throw Error("unsupported_question");
-      await this.d.sdk.threads.interactions.resolve({
+      const answers = { [q.id]: { selected: [option.value] } };
+      if (form.plugin) await this.d.sdk.threads.interactions.respond({
+        threadId: b.threadId, interactionId: interaction.id, value: { answers },
+      });
+      else await this.d.sdk.threads.interactions.resolve({
         threadId: b.threadId,
         interactionId: interaction.id,
         resolution: {
           kind: "user_answer",
-          answers: { [q.id]: { selected: [option.value] } },
+          answers,
         },
       });
     } else throw Error("unsupported_question");
@@ -1574,30 +1577,32 @@ export class ChatBridge {
       this.enqueue(b.topicId, this.tr("Этот вопрос уже закрыт."));
       return;
     }
-    if (
-      i.payload.kind !== "user_question" ||
-      i.payload.questions.length !== 1 ||
-      !i.payload.questions[0].allowFreeText
-    ) {
+    const form = ownerQuestion(i);
+    if (!form || form.questions.length !== 1 || !form.questions[0].allowFreeText) {
       this.enqueue(
         b.topicId,
         this.tr("Для этого вопроса выбери кнопку или открой BB."),
       );
       return;
     }
-    const question = i.payload.questions[0];
-    await this.d.sdk.threads.interactions.resolve({
+    const question = form.questions[0];
+    const answers = { [question.id]: { selected: [], freeText: text } };
+    if (form.plugin) await this.d.sdk.threads.interactions.respond({
+      threadId: q.threadId, interactionId: i.id, value: { answers },
+    });
+    else await this.d.sdk.threads.interactions.resolve({
       threadId: q.threadId,
       interactionId: q.interactionId,
       resolution: {
         kind: "user_answer",
-        answers: { [question.id]: { selected: [], freeText: text } },
+        answers,
       },
     });
     this.enqueue(b.topicId, this.tr("Ответ передан BB."));
   }
   private question(b: Binding, i: PendingInteraction) {
-    const id = "question:" + b.revision + ":" + i.id;
+    const form = ownerQuestion(i);
+    const id = "question:" + b.revision + ":" + i.id + (form?.plugin ? ":owner-v1" : "");
     if (this.s.get("chat:out:" + id)) return;
     let text = this.tr("❓ BB ждёт ответа\n");
     const keys: Key[][] = [];
@@ -1621,13 +1626,10 @@ export class ChatBridge {
               decision,
             ),
           ]);
-    } else if (i.payload.kind === "user_question") {
-      text += i.payload.questions
-        .map((q) => q.prompt)
-        .join("\n\n")
-        .slice(0, 2400);
-      if (i.payload.questions.length === 1) {
-        const q = i.payload.questions[0];
+    } else if (form) {
+      text += form.prompt.slice(0, 2400);
+      if (form.questions.length === 1) {
+        const q = form.questions[0];
         if (!q.multiSelect)
           for (const o of q.options ?? [])
             keys.push([
