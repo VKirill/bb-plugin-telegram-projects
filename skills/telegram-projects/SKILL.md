@@ -9,6 +9,8 @@ Use `bb telegram-projects status --json` and `chat-status --json` for diagnostic
 
 The owner's Telegram menu supports /project, /projects, /menu, /chats, /new, /model, /section, /history, /stop, /disconnect and /tasks. Additional Telegram topics bind through /project. A new session starts on its first text/voice message; existing sessions connect explicitly and remain visible in BB. Only bound threads and Lane Pilot tasks are observed. Do not attach unrelated or hidden chats automatically.
 
+In a connected topic, `/effort` shows the thread's reasoning level and the current model's supported choices. Tap a level or send `/effort high` to save it for the next run.
+
 Settings chatEnabled and richReplies control conversations and native Rich Messages. Incoming text/voice uses the existing owner-only companion, a durable local spool, and BB SDK. It is the only Telegram poller: never start another getUpdates/webhook receiver with the token. Voice uses BB system.transcribeVoice; do not request separate credentials. Questions depend on provider support; complex forms link to BB.
 
 Personal host paths and IDs remain fixed; token stays in the private config. Keep plugin storage on updates. Unknown mutation outcomes must be checked, not automatically replayed. Read README.md and docs/usage.md in the source repository for limits and recovery. Never print token values or private message queues.

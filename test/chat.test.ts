@@ -53,7 +53,16 @@ function fixture() {
         { id: "codex", displayName: "Codex", available: true },
       ],
       models: async () => ({
-        models: [{ model: "model-a", displayName: "Модель A" }],
+        models: [
+          {
+            model: "model-a",
+            displayName: "Модель A",
+            supportedReasoningEfforts: [
+              { reasoningEffort: "low" },
+              { reasoningEffort: "high" },
+            ],
+          },
+        ],
         modelLoadError: null,
       }),
     },
@@ -74,7 +83,10 @@ function fixture() {
       }),
     },
     threads: {
-      defaultExecutionOptions: async () => ({ model: "model-a" }),
+      defaultExecutionOptions: async () => ({
+        model: "model-a",
+        reasoningLevel: "low",
+      }),
       get: async ({ threadId }: any) => ({ ...thread, id: threadId }),
       list: async () => [thread],
       spawn: async (a: any) => {
@@ -294,6 +306,68 @@ test("model menu uses BB catalog and does not alter other chats", async () => {
   } finally {
     f.cleanup();
   }
+});
+test("effort picker uses the connected thread's model and saves a choice once", async (t) => {
+  const f = fixture();
+  t.after(f.cleanup);
+  const models = f.sdk.providers.models;
+  f.sdk.providers.models = async (args: any) => {
+    assert.equal(args.providerId, "codex");
+    assert.equal(args.environmentId, "env_one");
+    return models();
+  };
+
+  await f.bridge.handle(f.input("Run"));
+  await f.bridge.handle(f.input("/effort"));
+  await f.bridge.flush();
+  assert.match(f.sent.at(-1).text, /Текущий уровень рассуждений: low/);
+  assert.deepEqual(
+    f.sent.at(-1).reply_markup.inline_keyboard.flat().map((key: { text: string }) => key.text),
+    ["✓ low", "high", "В меню"],
+  );
+
+  await f.press("effort");
+  await f.press("effort");
+  await f.bridge.flush();
+  assert.deepEqual(f.calls.map(([kind]) => kind), ["spawn", "update"]);
+  assert.equal(f.calls[1][1].threadId, "thr_one");
+  assert.equal(f.calls[1][1].reasoningLevel, "high");
+  assert.ok(
+    f.sent.some((message) =>
+      message.text.includes("Уровень со следующего запуска: high"),
+    ),
+  );
+});
+
+test("effort accepts a supported argument and rejects unsupported levels", async (t) => {
+  const f = fixture();
+  t.after(f.cleanup);
+  await f.bridge.handle(f.input("Run"));
+  await f.bridge.handle(f.input("/effort@Bot HIGH"));
+  await f.bridge.handle(f.input("/effort max"));
+  await f.bridge.flush();
+  assert.deepEqual(f.calls.map(([kind]) => kind), ["spawn", "update"]);
+  assert.equal(f.calls[1][1].reasoningLevel, "high");
+  assert.match(f.sent.at(-1).text, /Выбери один из доступных уровней/);
+});
+
+test("effort needs a connected thread and rejects a picker for an old model", async (t) => {
+  const f = fixture();
+  t.after(f.cleanup);
+  await f.bridge.handle(f.input("/effort high"));
+  await f.bridge.flush();
+  assert.match(f.sent.at(-1).text, /подключи чат через \/chats/);
+
+  await f.bridge.handle(f.input("Run"));
+  await f.bridge.handle(f.input("/effort"));
+  f.sdk.threads.defaultExecutionOptions = async () => ({
+    model: "model-b",
+    reasoningLevel: "low",
+  });
+  await f.press("effort");
+  await f.bridge.flush();
+  assert.deepEqual(f.calls.map(([kind]) => kind), ["spawn"]);
+  assert.match(f.sent.at(-1).text, /Модель изменилась/);
 });
 test("only final agent text sent once, not tool commentary or previous turns", async () => {
   const f = fixture();
