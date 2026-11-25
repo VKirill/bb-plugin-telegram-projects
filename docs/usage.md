@@ -45,6 +45,7 @@ The plugin menu and handlers share the `BOT_COMMANDS` table; the Telegram menu i
 | `/stop` | Request stop for the bound thread with confirmation. |
 | `/disconnect` | Remove the Telegram-to-thread binding. |
 | `/model`, `/profile`, `/section`, `/server` | Choose provider/model, CLI profile, project folder or server for a new conversation. |
+| `/effort [level]` | Show the connected thread's current reasoning effort and available levels, or set a level directly with `/effort high`. Changes apply from the next run. |
 | `/tasks` | Show Lane Pilot tasks for the topic's project in the plugin. |
 | `/use <thread-id>` | Open a connection card for a thread ID. |
 | `/say <text>` | Send text beginning with `/` to the agent. |

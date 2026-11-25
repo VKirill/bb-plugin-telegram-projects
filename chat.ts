@@ -937,6 +937,92 @@ export class ChatBridge {
       keys,
     );
   }
+  private async effort(b: Binding, level?: string, expectedModel?: string) {
+    if (!b.threadId) {
+      this.enqueue(b.topicId, this.tr("Сначала подключи чат через /chats."));
+      return;
+    }
+    const thread = await this.validThread(b, b.threadId);
+    const options = await this.d.sdk.threads.defaultExecutionOptions({
+      threadId: thread.id,
+      signal: this.d.signal,
+    });
+    if (!options) {
+      this.enqueue(
+        b.topicId,
+        this.tr("Не удалось определить текущую модель BB."),
+      );
+      return;
+    }
+    if (expectedModel !== undefined && expectedModel !== options.model) {
+      this.enqueue(
+        b.topicId,
+        this.tr("Модель изменилась. Открой /effort заново."),
+      );
+      return;
+    }
+    const request = {
+      providerId: thread.providerId,
+      signal: this.d.signal,
+    };
+    const catalog = await this.d.sdk.providers.models(
+      thread.environmentId
+        ? { ...request, environmentId: thread.environmentId }
+        : request,
+    );
+    const model =
+      catalog.models.find((m) => m.model === options.model) ??
+      catalog.selectedOnlyModels?.find((m) => m.model === options.model);
+    if (catalog.modelLoadError || !model) {
+      this.enqueue(
+        b.topicId,
+        this.tr("Не удалось загрузить уровни рассуждений текущей модели."),
+      );
+      return;
+    }
+    const levels = model.supportedReasoningEfforts.map(
+      (entry) => entry.reasoningEffort,
+    );
+    if (levels.length === 0) {
+      this.enqueue(
+        b.topicId,
+        this.tr("У текущей модели нет доступных уровней рассуждений."),
+      );
+      return;
+    }
+    const selected = levels.find((value) => value === level);
+    if (selected !== undefined) {
+      await this.d.sdk.threads.update({
+        threadId: thread.id,
+        reasoningLevel: selected,
+      });
+      this.enqueue(
+        b.topicId,
+        this.tr("Уровень со следующего запуска: ") + selected,
+        [[this.button(b, "menu", this.tr("В меню"))]],
+      );
+      return;
+    }
+    const keys = levels.map((value) => [
+      this.button(
+        b,
+        "effort",
+        value === options.reasoningLevel ? "✓ " + value : value,
+        value,
+        options.model,
+      ),
+    ]);
+    keys.push([this.button(b, "menu", this.tr("В меню"))]);
+    this.enqueue(
+      b.topicId,
+      (level === undefined ? "" : this.tr("Выбери один из доступных уровней.\n")) +
+        model.displayName +
+        "\n" +
+        this.tr("Текущий уровень рассуждений: ") +
+        options.reasoningLevel,
+      keys,
+    );
+  }
   async handle(input: ChatInput) {
     const a = input.callback?.startsWith("bb:")
       ? this.s.get<Action>("chat:button:" + input.callback.slice(3))
@@ -957,6 +1043,7 @@ export class ChatBridge {
       "provider",
       "models",
       "model",
+      "effort",
       "hosts",
       "host",
       "profiles",
@@ -1049,6 +1136,16 @@ export class ChatBridge {
         ),
       );
       return;
+    }
+    if (cmd === "/effort") {
+      if (args.length > 1) {
+        this.enqueue(
+          input.topicId,
+          this.tr("Используй /effort или, например, /effort high."),
+        );
+        return;
+      }
+      return this.effort(b, args[0]?.toLowerCase());
     }
     const commands: Record<string, string> = {
       "/chats": "sessions",
@@ -1428,6 +1525,8 @@ export class ChatBridge {
       }
       case "models":
         return this.models(b, Number(a.arg) || 0);
+      case "effort":
+        return this.effort(b, a.arg, a.extra);
       case "model": {
         const t = b.threadId
           ? await this.validThread(b, b.threadId)

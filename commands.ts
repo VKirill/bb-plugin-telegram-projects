@@ -81,6 +81,16 @@ export const BOT_COMMANDS: BotCommand[] = [
     hintEn: "Provider and model for a new chat.",
   },
   {
+    command: "effort",
+    group: "agent",
+    ru: "Уровень рассуждений",
+    en: "Reasoning effort",
+    hintRu:
+      "Уровень рассуждений подключённого чата. Можно выбрать кнопкой или отправить /effort high.",
+    hintEn:
+      "Choose the connected chat's reasoning effort with a button or send /effort high.",
+  },
+  {
     command: "profile",
     group: "agent",
     ru: "Профиль агента",

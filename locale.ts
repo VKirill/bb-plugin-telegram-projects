@@ -104,6 +104,18 @@ export const english: Record<string, string> = {
     "This chat is already connected to another topic. Disconnect it there first.",
   "Смена модели доступна после завершения или остановки текущего запуска.":
     "You can change the model after the current run finishes or stops.",
+  "Сначала подключи чат через /chats.": "Connect a chat with /chats first.",
+  "Не удалось определить текущую модель BB.": "Could not determine the current BB model.",
+  "Модель изменилась. Открой /effort заново.": "The model changed. Open /effort again.",
+  "Не удалось загрузить уровни рассуждений текущей модели.":
+    "Could not load reasoning levels for the current model.",
+  "У текущей модели нет доступных уровней рассуждений.":
+    "The current model has no selectable reasoning levels.",
+  "Уровень со следующего запуска: ": "Reasoning effort from the next run: ",
+  "Выбери один из доступных уровней.\n": "Choose one of the available levels.\n",
+  "Текущий уровень рассуждений: ": "Current reasoning effort: ",
+  "Используй /effort или, например, /effort high.":
+    "Use /effort or, for example, /effort high.",
   "Модель выбрана: ": "Model selected: ",
   "📖 Последний ответ\n\n": "📖 Last reply\n\n",
   "В этом чате ещё нет ответа.": "This chat has no reply yet.",
